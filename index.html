@@ -106,7 +106,89 @@ input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0
 .toast{position:fixed;bottom:22px;left:22px;z-index:200;background:#18223d;color:#fff;padding:13px 17px;border-radius:14px;box-shadow:var(--shadow)}
 footer{padding:35px 0;border-top:1px solid var(--line);color:var(--muted)}
 @media(max-width:900px){.hero{grid-template-columns:1fr;text-align:center}.lead{margin-inline:auto}.actions{justify-content:center}.grid{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}.hero-visual{min-height:360px}.admin{grid-template-columns:1fr}.sidebar{position:static}.examgrid{grid-template-columns:1fr}.navlinks{display:none}}
-@media(max-width:600px){.container{width:min(100% - 24px,1180px)}.nav{height:68px}.hero{padding-top:45px}.orb{width:220px;height:220px}.brain{font-size:85px}.floatcard{font-size:11px}.grid{grid-template-columns:1fr}.formgrid{grid-template-columns:1fr}.field.full{grid-column:auto}.stats{grid-template-columns:1fr 1fr}.section{padding:38px 0}h1{font-size:40px}.sectionhead{align-items:flex-start;flex-direction:column}}
+@media(max-width:900px){
+ body{overflow-x:hidden}
+ .container{width:min(100% - 28px,1180px)}
+ .nav{height:70px;gap:8px}
+ .brand{min-width:0}
+ .brand small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px}
+ .hero{grid-template-columns:1fr;padding:48px 0 30px;gap:24px;text-align:center}
+ .lead{margin-inline:auto;max-width:680px}
+ .actions{justify-content:center}
+ .hero-visual{min-height:310px}
+ .orb{width:220px;height:220px}
+ .brain{font-size:88px}
+ .fc1{top:18px;right:2px}.fc2{bottom:35px;left:2px}.fc3{bottom:0;right:35px}
+ .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .admin{grid-template-columns:1fr}
+ .sidebar{position:static}
+ .examgrid{grid-template-columns:1fr}
+ .navlinks{display:none}
+ .tablewrap{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+ .table{min-width:620px}
+ .test-link-box input{min-width:0}
+}
+@media(max-width:600px){
+ html,body{width:100%;max-width:100%;overflow-x:hidden}
+ .container{width:calc(100% - 20px);max-width:none}
+ .nav{height:64px}
+ .brand{gap:8px;padding:0!important}
+ .logo{width:40px;height:40px;border-radius:13px;font-size:21px}
+ .brand b{font-size:15px}
+ .brand small{font-size:9px;max-width:150px}
+ .iconbtn{padding:8px;font-size:18px}
+ .hero{padding:32px 0 20px;gap:10px}
+ .badge{font-size:11px;padding:7px 10px}
+ h1{font-size:clamp(31px,10vw,42px);letter-spacing:-1px;margin:13px 0 10px}
+ .lead{font-size:14px;line-height:1.9}
+ .actions{gap:8px;margin-top:18px}
+ .btn{padding:10px 13px;font-size:13px;border-radius:12px}
+ .hero-visual{min-height:250px}
+ .orb{width:170px;height:170px}
+ .orb:before{inset:-22px}.orb:after{inset:-42px}
+ .brain{font-size:65px}
+ .floatcard{padding:9px 11px;border-radius:13px;font-size:9px}
+ .fc1{top:8px;right:0}.fc2{bottom:25px;left:0}.fc3{bottom:0;right:22px}
+ .section{padding:32px 0}
+ .sectionhead{align-items:flex-start;flex-direction:column;gap:10px;margin-bottom:15px}
+ .sectionhead h2{font-size:24px}
+ .sectionhead p{font-size:12px;line-height:1.8}
+ .grid{grid-template-columns:1fr;gap:11px}
+ .stats{grid-template-columns:1fr 1fr;gap:10px}
+ .card{padding:16px;border-radius:20px}
+ .category .icon{width:50px;height:50px;font-size:28px;border-radius:15px;margin-bottom:12px}
+ .test .cover{height:110px;margin:-16px -16px 14px;font-size:42px}
+ .page{padding:30px 0 55px}
+ .formgrid{grid-template-columns:1fr;gap:11px}
+ .field.full{grid-column:auto}
+ .modal{padding:10px}
+ .modalbox{width:100%;max-height:94vh;padding:17px;border-radius:20px}
+ .exambar{align-items:flex-start;flex-direction:column;gap:9px}
+ .option{padding:12px;font-size:13px}
+ .qnav{grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
+ .qnum{padding:7px 4px;font-size:11px}
+ .admin{gap:11px}
+ .sidebar{padding:11px}
+ .sidebtn{padding:10px 11px;font-size:13px}
+ .option-editor{grid-template-columns:24px minmax(0,1fr) 34px;gap:6px}
+ .question-image-preview img{max-height:190px}
+ .exam-question-image{max-height:230px}
+ .test-link-box{align-items:stretch;flex-direction:column}
+ .test-link-box input{width:100%;min-width:0}
+ footer{padding:25px 0;font-size:11px;line-height:1.9}
+}
+@media(max-width:380px){
+ .container{width:calc(100% - 14px)}
+ .stats{grid-template-columns:1fr}
+ .hero{padding-top:24px}
+ .brand small{max-width:125px}
+ .btn{padding:9px 10px;font-size:12px}
+}
+
+/* Results table stays readable on small screens without changing the site design. */
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tablewrap .table{min-width:900px}
 </style>
 </head>
 <body>
@@ -281,7 +363,13 @@ function renderStats(el){
 }
 function renderResults(){
  const arr=db.attempts.filter(a=>a.deviceId===deviceId()&&a.completed);
- document.getElementById('resultsGrid').innerHTML=arr.length?arr.map(a=>{const t=db.tests.find(x=>x.id===a.testId);return `<div class="card"><span class="pill">${esc(t?.title||'آزمون')}</span><h2 class="gradient">${a.percent}%</h2><p class="muted">${a.correct} صحیح · ${a.wrong} غلط · ${a.unanswered} بی‌پاسخ</p><p class="muted">${new Date(a.start).toLocaleString('fa-IR')}</p><button class="btn secondary" data-action="result" data-id="${a.id}">مشاهده نتیجه</button></div>`}).join(''):`<div class="card"><h3>هنوز نتیجه‌ای ثبت نشده است.</h3><p class="muted">بعد از شرکت در آزمون، نتیجه اینجا نمایش داده می‌شود.</p></div>`;
+ document.getElementById('resultsGrid').innerHTML=arr.length?arr.map(a=>{
+   const t=db.tests.find(x=>x.id===a.testId);
+   if(t?.showResult===false){
+     return `<div class="card"><span class="pill">${esc(t?.title||'آزمون')}</span><h3 style="margin-top:14px">آزمون ثبت شد ✓</h3><p class="muted">نتیجه این آزمون توسط مدیر بررسی خواهد شد و فعلاً برای شما نمایش داده نمی‌شود.</p><p class="muted">${new Date(a.start).toLocaleString('fa-IR')}</p></div>`;
+   }
+   return `<div class="card"><span class="pill">${esc(t?.title||'آزمون')}</span><h2 class="gradient">${a.percent}%</h2><p class="muted">${a.correct} صحیح · ${a.wrong} غلط · ${a.unanswered} بی‌پاسخ</p><p class="muted">${new Date(a.start).toLocaleString('fa-IR')}</p><button class="btn secondary" data-action="result" data-id="${a.id}">مشاهده نتیجه</button></div>`;
+ }).join(''):`<div class="card"><h3>هنوز نتیجه‌ای ثبت نشده است.</h3><p class="muted">بعد از شرکت در آزمون، نتیجه اینجا نمایش داده می‌شود.</p></div>`;
 }
 
 function openModal(content){document.getElementById('modalContent').innerHTML=content;document.getElementById('modal').classList.remove('hidden');}
@@ -293,6 +381,10 @@ function handleAction(action,id){
  if(action==='openTest')openTest(id);
  if(action==='result')showResult(id);
  if(action==='editTest')editTest(id);
+ if(action==='testResults')showTestResults(id);
+ if(action==='attemptDetails')showAttemptDetails(id);
+ if(action==='exportExcel')exportTestExcel(id);
+ if(action==='exportCSV')exportTestCSV(id);
  if(action==='newTest')editTest(null);
  if(action==='publish')togglePublish(id);
  if(action==='duplicate')duplicateTest(id);
@@ -402,8 +494,29 @@ function finishAttempt(auto){
  currentAttempt.score=score;currentAttempt.total=total;currentAttempt.autoTotal=autoTotal;currentAttempt.percent=autoTotal?Math.round(score/autoTotal*100):0;
  currentAttempt.correct=correct;currentAttempt.wrong=wrong;currentAttempt.unanswered=unanswered;currentAttempt.manual=manual;
  currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);currentAttempt.completed=true;saveDB();
- if(t.showResult!==false)showResult(currentAttempt.id);else{showView('results');toast('آزمون شما با موفقیت ثبت شد. نتیجه توسط مدیر بررسی خواهد شد.');}
+ if(t.showResult!==false){
+   showResult(currentAttempt.id);
+ }else{
+   showPendingResult(currentAttempt.id);
+ }
 }
+function showPendingResult(aid){
+ const a=db.attempts.find(x=>x.id===aid),t=db.tests.find(x=>x.id===a?.testId);
+ document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+ const testsView=document.getElementById('tests');
+ testsView.classList.add('active');
+ testsView.innerHTML=`<div class="container page"><div class="card" id="pendingResultCard">
+   <span class="badge">آزمون ثبت شد ✓</span>
+   <h1 style="font-size:42px">پاسخ شما با موفقیت ثبت شد</h1>
+   <p class="lead">آزمون «${esc(t?.title||'آزمون')}» با موفقیت ارسال شد.</p>
+   <p class="muted" style="font-size:16px;line-height:2">نتیجه این آزمون توسط مدیر بررسی خواهد شد و فعلاً نمایش داده نمی‌شود.</p>
+   <div class="actions">
+     <button class="btn secondary" id="pendingBackBtn">بازگشت به آزمون‌ها</button>
+   </div>
+ </div></div>`;
+ document.getElementById('pendingBackBtn').addEventListener('click',()=>showView('tests'));
+}
+
 function showResult(aid){
  const a=db.attempts.find(x=>x.id===aid),t=db.tests.find(x=>x.id===a.testId);
  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById('tests').classList.add('active');
@@ -433,6 +546,7 @@ function renderAdmin(tab='dashboard'){
     <div><h3>${esc(t.title)}</h3><span class="pill">${esc(t.status)}</span> <span class="muted">${t.questionIds.length} سؤال · ${esc(t.category)}</span></div>
     <div class="actions" style="margin:0">
       <button class="btn secondary" data-action="editTest" data-id="${t.id}">ویرایش</button>
+      <button class="btn secondary" data-action="testResults" data-id="${t.id}">📊 نتایج</button>
       <button class="btn secondary" data-action="duplicate" data-id="${t.id}">تکثیر</button>
       <button class="btn primary" data-action="publish" data-id="${t.id}">${t.status==='published'?'لغو انتشار':'انتشار'}</button>
     </div>
@@ -459,6 +573,105 @@ function renderAdmin(tab='dashboard'){
   c.innerHTML=`<div class="sectionhead"><div><h2>تنظیمات</h2><p>پشتیبان و تنظیمات پروژه.</p></div></div><div class="card"><div class="actions"><button class="btn primary" data-action="backup">Export / Backup</button><button class="btn secondary" data-action="restore">Import / Restore</button><button class="btn secondary" data-action="password">تغییر رمز مدیر</button></div><p class="muted" style="margin-top:18px">این نسخه به Supabase متصل است؛ اطلاعات آزمون‌ها و نتایج روی سرور ذخیره می‌شوند و LocalStorage فقط به‌عنوان حافظه موقت مرورگر استفاده می‌شود.</p></div>`;
  }
 }
+function testResultRows(testId){
+ const attempts=db.attempts.filter(a=>a.testId===testId&&a.completed).sort((a,b)=>{
+   const pa=Number(a.percent)||0,pb=Number(b.percent)||0;
+   if(pb!==pa)return pb-pa;
+   const sa=Number(a.score)||0,sb=Number(b.score)||0;
+   if(sb!==sa)return sb-sa;
+   return Number(a.start||0)-Number(b.start||0);
+ });
+ return attempts;
+}
+function resultStatus(a){
+ const t=db.tests.find(x=>x.id===a.testId);
+ return t?.showResult===false?'بررسی مدیر':'نهایی';
+}
+function resultData(testId){
+ const t=db.tests.find(x=>x.id===testId);
+ return testResultRows(testId).map((a,i)=>({
+   'رتبه':i+1,
+   'نام':`${a.first||''} ${a.last||''}`.trim(),
+   'سن':a.age??'',
+   'پایه':a.grade??'',
+   'امتیاز':a.score??0,
+   'از':a.autoTotal??a.total??0,
+   'درصد':a.percent??0,
+   'صحیح':a.correct??0,
+   'غلط':a.wrong??0,
+   'بی‌پاسخ':a.unanswered??0,
+   'تشریحی':a.manual??0,
+   'مدت (ثانیه)':a.duration??'',
+   'وضعیت':resultStatus(a),
+   'تاریخ':new Date(a.start).toLocaleString('fa-IR')
+ }));
+}
+function csvEscape(v){
+ const s=String(v??'');
+ return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+}
+function exportTestCSV(testId){
+ const t=db.tests.find(x=>x.id===testId),rows=resultData(testId);
+ if(!rows.length){toast('برای این آزمون هنوز نتیجه‌ای ثبت نشده است.');return;}
+ const headers=Object.keys(rows[0]);
+ const csv='\ufeff'+[headers,...rows.map(r=>headers.map(h=>r[h]))].map(row=>row.map(csvEscape).join(',')).join('\r\n');
+ const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`IQNova-${(t?.title||'آزمون').replace(/[^\w\u0600-\u06FF-]+/g,'_')}-results.csv`;a.click();
+ setTimeout(()=>URL.revokeObjectURL(a.href),500);toast('فایل CSV آماده شد.');
+}
+function loadXLSX(){
+ if(window.XLSX)return Promise.resolve(window.XLSX);
+ return new Promise((resolve,reject)=>{
+   const existing=document.querySelector('script[data-sheetjs]');
+   if(existing){existing.addEventListener('load',()=>resolve(window.XLSX));existing.addEventListener('error',reject);return;}
+   const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';sc.async=true;sc.dataset.sheetjs='1';
+   sc.onload=()=>resolve(window.XLSX);sc.onerror=()=>reject(new Error('SheetJS load failed'));document.head.appendChild(sc);
+ });
+}
+async function exportTestExcel(testId){
+ const t=db.tests.find(x=>x.id===testId),rows=resultData(testId);
+ if(!rows.length){toast('برای این آزمون هنوز نتیجه‌ای ثبت نشده است.');return;}
+ try{
+   toast('در حال آماده‌سازی فایل Excel...');
+   const XLSX=await loadXLSX();
+   const ws=XLSX.utils.json_to_sheet(rows);
+   ws['!cols']=Object.keys(rows[0]).map(h=>({wch:Math.max(12,Math.min(28,String(h).length+4))}));
+   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'نتایج');
+   XLSX.writeFile(wb,`IQNova-${(t?.title||'آزمون').replace(/[^\w\u0600-\u06FF-]+/g,'_')}-results.xlsx`);
+   toast('فایل Excel آماده شد.');
+ }catch(e){console.error(e);toast('ساخت فایل Excel انجام نشد.');}
+}
+function showAttemptDetails(aid){
+ const a=db.attempts.find(x=>x.id===aid),t=db.tests.find(x=>x.id===a?.testId);
+ if(!a||!t)return;
+ const rows=(a.order||t.questionIds||[]).map((qid,i)=>{
+   const q=db.questions.find(x=>x.id===qid);if(!q)return null;
+   const ans=a.answers?.[qid];
+   let given='بی‌پاسخ';
+   if(ans!==undefined&&ans!==''){
+     if(q.type==='mcq'||q.type==='truefalse')given=q.options?.[Number(ans)]??ans;
+     else if(q.type==='multimcq')given=(Array.isArray(ans)?ans:[]).map(x=>q.options?.[Number(x)]??x).join('، ')||'بی‌پاسخ';
+     else given=String(ans);
+   }
+   let correct='—';
+   if(q.type==='mcq'||q.type==='truefalse')correct=q.options?.[Number(Array.isArray(q.correct)?q.correct[0]:q.correct)]??q.correct;
+   else if(q.type==='multimcq')correct=(Array.isArray(q.correct)?q.correct:[]).map(x=>q.options?.[Number(x)]??x).join('، ');
+   else if(q.type==='short')correct=(q.answers||[]).join('، ');
+   const isManual=q.type==='essay';
+   return `<tr><td>${i+1}</td><td>${esc(q.text)}</td><td>${esc(given)}</td><td>${esc(correct)}</td><td>${isManual?'تصحیح دستی':String(given)===String(correct)?'صحیح':'غلط'}</td></tr>`;
+ }).filter(Boolean).join('');
+ openModal(`<h2>جزئیات نتیجه · ${esc(a.first||'')} ${esc(a.last||'')}</h2><p class="muted">${esc(t.title)} · رتبه در زمان نمایش بر اساس درصد و امتیاز</p><div class="stats"><div class="card stat"><strong>${a.percent??0}%</strong><span>درصد</span></div><div class="card stat"><strong>${a.score??0}</strong><span>امتیاز</span></div><div class="card stat"><strong>${a.correct??0}</strong><span>صحیح</span></div><div class="card stat"><strong>${a.wrong??0}</strong><span>غلط</span></div></div><div class="tablewrap" style="margin-top:18px"><table class="table"><tr><th>#</th><th>سؤال</th><th>پاسخ شرکت‌کننده</th><th>پاسخ صحیح</th><th>وضعیت</th></tr>${rows||'<tr><td colspan="5">جزئیات سؤال‌ها موجود نیست.</td></tr>'}</table></div><div class="actions"><button class="btn secondary" type="button" onclick="closeModal()">بستن</button></div>`);
+}
+function showTestResults(testId){
+ const t=db.tests.find(x=>x.id===testId);if(!t)return;
+ const attempts=testResultRows(testId),rows=resultData(testId);
+ const body=rows.length?rows.map((r,i)=>{
+   const a=attempts[i];
+   return `<tr><td><b>${r['رتبه']}</b></td><td>${esc(r['نام'])}</td><td>${esc(r['سن'])}</td><td>${esc(r['پایه'])}</td><td><b>${r['امتیاز']}</b> / ${r['از']}</td><td><b>${r['درصد']}%</b></td><td>${r['صحیح']}</td><td>${r['غلط']}</td><td>${r['بی‌پاسخ']}</td><td>${r['تشریحی']}</td><td>${esc(r['تاریخ'])}</td><td><button class="btn secondary" data-action="attemptDetails" data-id="${a.id}">جزئیات</button></td></tr>`;
+ }).join(''):`<tr><td colspan="12" style="text-align:center">هنوز نتیجه‌ای برای این آزمون ثبت نشده است.</td></tr>`;
+ openModal(`<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap"><div><h2>نتایج آزمون: ${esc(t.title)}</h2><p class="muted">رتبه‌بندی از نفر اول تا آخر بر اساس درصد، سپس امتیاز.</p></div><div class="actions" style="margin:0"><button class="btn primary" data-action="exportExcel" data-id="${testId}">📊 Excel</button><button class="btn secondary" data-action="exportCSV" data-id="${testId}">CSV</button></div></div><div class="tablewrap" style="margin-top:18px"><table class="table"><tr><th>رتبه</th><th>نام</th><th>سن</th><th>پایه</th><th>امتیاز</th><th>درصد</th><th>صحیح</th><th>غلط</th><th>بی‌پاسخ</th><th>تشریحی</th><th>تاریخ</th><th>جزئیات</th></tr>${body}</table></div>`);
+}
+
 function editTest(id){
  const t=id?db.tests.find(x=>x.id===id):{title:'',description:'',welcome:'خوش آمدید! آماده‌ای؟',category:db.categories[0],difficulty:'متوسط',duration:10,showResult:true,multiple:false,randomQuestions:false,visibility:'public',status:'draft',rules:'پاسخ‌ها را با دقت انتخاب کنید.',questionIds:[]};
  const cats=db.categories.map(x=>`<option ${x===t.category?'selected':''}>${esc(x)}</option>`).join('');
