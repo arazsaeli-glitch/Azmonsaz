@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#f7f9ff">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>IQNova | آزمایشگاه هوش، منطق و مهارت</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -228,7 +229,7 @@ footer{padding:35px 0;border-top:1px solid var(--line);color:var(--muted)}
 
 <section id="tests" class="view page"><div class="container"><div class="sectionhead"><div><h2>آزمون‌ها</h2><p>آزمون موردنظر را انتخاب و شروع کن.</p></div></div><div class="grid" id="testsGrid"></div></div></section>
 <section id="results" class="view page"><div class="container"><div class="sectionhead"><div><h2>نتایج من</h2><p>نتایج آزمون‌های انجام‌شده روی این مرورگر.</p></div></div><div class="grid" id="resultsGrid"></div></div></section>
-<section id="about" class="view page"><div class="container"><div class="card"><span class="badge">IQNova</span><h1 style="font-size:42px">آزمایشگاه هوش، منطق و مهارت</h1><p class="lead">این پروژه برای ارائه مدرسه طراحی شده و بدون نیاز به سرور، اطلاعات آزمون‌ها و نتایج را در مرورگر نگهداری می‌کند.</p><div class="grid"><div class="card"><h3>🎯 تمرکز</h3><p class="muted">آزمون‌های متنوع برای تمرکز و دقت.</p></div><div class="card"><h3>🧩 منطق</h3><p class="muted">سؤال‌های استدلالی و حل مسئله.</p></div><div class="card"><h3>📊 نتیجه</h3><p class="muted">نمایش امتیاز، درصد و وضعیت پاسخ‌ها.</p></div><div class="card"><h3>💾 ذخیره</h3><p class="muted">ذخیره محلی اطلاعات در مرورگر.</p></div></div></div></div></section>
+<section id="about" class="view page"><div class="container"><div class="card"><span class="badge">IQNova</span><h1 style="font-size:42px">آزمایشگاه هوش، منطق و مهارت</h1><p class="lead">این پروژه برای ارائه حرفه‌ای طراحی شده و اطلاعات آزمون‌ها و نتایج با احراز هویت و دسترسی کنترل‌شده در Supabase نگهداری می‌شوند.</p><div class="grid"><div class="card"><h3>🎯 تمرکز</h3><p class="muted">آزمون‌های متنوع برای تمرکز و دقت.</p></div><div class="card"><h3>🧩 منطق</h3><p class="muted">سؤال‌های استدلالی و حل مسئله.</p></div><div class="card"><h3>📊 نتیجه</h3><p class="muted">نمایش امتیاز، درصد و وضعیت پاسخ‌ها.</p></div><div class="card"><h3>💾 ذخیره</h3><p class="muted">ذخیره امن اطلاعات در Supabase.</p></div></div></div></div></section>
 
 <section id="admin" class="view page"><div class="container admin"><aside class="card sidebar"><h3 style="margin-top:5px">پنل مدیریت</h3><button class="sidebtn active" data-tab="dashboard">داشبورد</button><button class="sidebtn" data-tab="tests">آزمون‌ها</button><button class="sidebtn" data-tab="questions">بانک سؤال</button><button class="sidebtn" data-tab="participants">شرکت‌کنندگان</button><button class="sidebtn" data-tab="categories">دسته‌بندی‌ها</button><button class="sidebtn" data-tab="settings">تنظیمات</button></aside><div id="adminContent"></div></div></section>
 </main>
@@ -239,66 +240,122 @@ footer{padding:35px 0;border-top:1px solid var(--line);color:var(--muted)}
 <div id="toast" class="toast hidden"></div>
 <input id="restoreInput" type="file" accept="application/json" class="hidden">
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 'use strict';
 
-const KEY='iqnova_final_v2';
+const KEY='iqnova_secure_v3';
 const SUPABASE_URL='https://wardcoesaoecgixzvelq.supabase.co';
 const SUPABASE_KEY='sb_publishable_vKj0adiNq5ZqqAvI2kl_Fg_nmkqWaGq';
+// This must match the email inserted into public.iqnova_admins in Supabase.
+const ADMIN_EMAIL='admin@iqnova.local';
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
 const DEFAULTS={
  categories:['هوش و IQ','منطق','ریاضی و عددی','الگوهای تصویری','تمرکز','حل مسئله','اطلاعات عمومی','سرگرمی'],
  tests:[],questions:[],attempts:[],settings:{theme:'light'},admin:{username:'admin',password:null}
 };
-let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null;
+let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null, authUser=null, booting=true;
 
 function clone(x){return JSON.parse(JSON.stringify(x));}
-function loadDB(){try{const saved=JSON.parse(localStorage.getItem(KEY)||'null');return {...clone(DEFAULTS),...(saved||{})};}catch(e){return clone(DEFAULTS);}}
-function saveDB(){
- try{localStorage.setItem(KEY,JSON.stringify(db));}
- catch(e){toast('ذخیره‌سازی مرورگر انجام نشد.');return false;}
- queueCloudSave();
- return true;
+function loadDB(){try{const saved=JSON.parse(localStorage.getItem(KEY)||'null');return {...clone(DEFAULTS),...(saved||{}),settings:{...DEFAULTS.settings,...(saved?.settings||{})}};}catch(e){return clone(DEFAULTS);}}
+function cacheDB(){try{localStorage.setItem(KEY,JSON.stringify({...db,admin:{username:'admin',password:null}}));}catch(e){console.warn('local cache failed',e);}}
+function saveDB(){cacheDB();queueCloudSave();return true;}
+function isManager(user=authUser){return !!user&&!user.is_anonymous&&String(user.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase();}
+function currentUserId(){return authUser?.id||null;}
+function deviceId(){return currentUserId()||'anonymous';}
+function safeQuestion(q){const x=clone(q||{});delete x.correct;delete x.answers;delete x.id;return x;}
+function safeImageUrl(v){const s=String(v??'').trim();if(!s)return '';if(/^https?:\/\//i.test(s))return s;if(/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(s))return s;return '';}
+function sanitizeLoadedData(){db.questions.forEach(q=>{q.image=safeImageUrl(q.image);});db.tests.forEach(t=>{t.title=String(t.title||'').trim();t.description=String(t.description||'');t.welcome=String(t.welcome||'');t.rules=String(t.rules||'');});}
+function safeTest(t){const x=clone(t||{});delete x.id;return x;}
+function contentRows(){
+ const rows=[];
+ db.categories.forEach((name,i)=>rows.push({kind:'category',id:'cat_'+i+'_'+slug(name),data:{name,icon:db.categoryIcons?.[name]||null}}));
+ db.tests.forEach(t=>rows.push({kind:'test',id:t.id,data:safeTest(t)}));
+ db.questions.forEach(q=>rows.push({kind:'question',id:q.id,data:safeQuestion(q)}));
+ rows.push({kind:'settings',id:'main',data:clone(db.settings||{})});
+ return rows;
 }
-function cloudHeaders(){return {'apikey':SUPABASE_KEY,'Content-Type':'application/json'};}
-async function cloudLoad(){
+function slug(v){return String(v||'').trim().toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g,'_').slice(0,40)||'item';}
+async function ensureParticipantAuth(){
+ const {data}=await sb.auth.getSession();
+ if(data.session?.user){authUser=data.session.user;adminAuthed=isManager();return authUser;}
+ const {data:anon,error}=await sb.auth.signInAnonymously();
+ if(error)throw error;
+ authUser=anon.user;adminAuthed=false;return authUser;
+}
+async function loadRemote(){
  try{
-  const r=await fetch(SUPABASE_URL+'/rest/v1/iqnova_state?id=eq.main&select=data',{headers:cloudHeaders()});
-  if(!r.ok) throw new Error('cloud load '+r.status);
-  const rows=await r.json();
-  if(rows[0]?.data){
-    const remote=rows[0].data;
-    db={...clone(DEFAULTS),...remote,settings:{...clone(DEFAULTS).settings,...(remote.settings||{})},admin:{...clone(DEFAULTS).admin,...(remote.admin||{})}};
-    localStorage.setItem(KEY,JSON.stringify(db));
-    cloudReady=true;
-    return true;
-  }
- }catch(e){console.warn('Supabase load failed',e);}
- cloudReady=false;
- return false;
+   const {data:rows,error}=await sb.from('iqnova_content_secure').select('kind,id,data').order('kind').order('id');
+   if(error)throw error;
+   const cats=rows.filter(r=>r.kind==='category').map(r=>r.data?.name).filter(Boolean);
+   const tests=rows.filter(r=>r.kind==='test').map(r=>({id:r.id,...(r.data||{})}));
+   const questions=rows.filter(r=>r.kind==='question').map(r=>({id:r.id,...(r.data||{})}));
+   const settings=rows.find(r=>r.kind==='settings'&&r.id==='main')?.data||{};
+   db={...clone(DEFAULTS),...db,categories:cats.length?cats:clone(DEFAULTS.categories),tests,questions,settings:{...clone(DEFAULTS.settings),...settings},attempts:[]};
+   sanitizeLoadedData();
+   if(isManager()){
+     const [{data:keys,error:ke},{data:attempts,error:ae}]=await Promise.all([
+       sb.from('iqnova_question_keys_secure').select('question_id,correct,answers'),
+       sb.from('iqnova_attempts_secure').select('*').order('started_at',{ascending:false})
+     ]);
+     if(ke)throw ke;if(ae)throw ae;
+     const km=new Map((keys||[]).map(k=>[k.question_id,k]));
+     db.questions.forEach(q=>{const k=km.get(q.id);if(k){q.correct=k.correct;q.answers=k.answers||[];}});
+     db.attempts=(attempts||[]).map(fromAttemptRow);
+   }else{
+     const {data:attempts,error:ae}=await sb.from('iqnova_attempts_secure').select('*').order('started_at',{ascending:false});
+     if(ae)throw ae;
+     db.attempts=(attempts||[]).map(fromAttemptRow);
+   }
+   cacheDB();cloudReady=true;return true;
+ }catch(e){console.error('Supabase load failed',e);cloudReady=false;return false;}
+}
+function fromAttemptRow(r){return {id:r.id,testId:r.test_id,deviceId:r.user_id,first:r.first_name,last:r.last_name,age:r.age,grade:r.grade,notes:r.notes,answers:r.answers||{},index:0,start:new Date(r.started_at).getTime(),completed:r.status==='completed',order:r.question_order||[],completedAt:r.completed_at?new Date(r.completed_at).getTime():null,duration:r.duration_seconds,score:Number(r.score||0),total:Number(r.total||0),autoTotal:Number(r.auto_total||0),percent:Number(r.percent||0),correct:r.correct||0,wrong:r.wrong||0,unanswered:r.unanswered||0,manual:r.manual||0};}
+function toAttemptRow(a){return {id:a.id,user_id:currentUserId(),test_id:a.testId,first_name:String(a.first||'').trim(),last_name:String(a.last||'').trim(),age:a.age?Number(a.age):null,grade:a.grade||null,notes:a.notes||null,answers:a.answers||{},question_order:a.order||[],started_at:new Date(a.start||Date.now()).toISOString(),completed_at:a.completed&&a.completedAt?new Date(a.completedAt).toISOString():null,duration_seconds:a.duration||null,status:a.completed?'completed':'in_progress',score:a.completed?Number(a.score||0):0,total:a.completed?Number(a.total||0):0,auto_total:a.completed?Number(a.autoTotal||0):0,percent:a.completed?Number(a.percent||0):0,correct:a.completed?Number(a.correct||0):0,wrong:a.completed?Number(a.wrong||0):0,unanswered:a.completed?Number(a.unanswered||0):0,manual:a.completed?Number(a.manual||0):0};}
+async function persistAttempt(a){
+ if(!currentUserId()||!a)return false;
+ const row=toAttemptRow(a);
+ if(a.completed){
+   // Finalized attempts are written by the server-side RPC only.
+   return true;
+ }
+ const {error}=await sb.from('iqnova_attempts_secure').upsert(row,{onConflict:'id'});
+ if(error){console.error(error);toast('ذخیره آزمون روی سرور انجام نشد.');return false;}
+ cloudReady=true;return true;
+}
+async function persistContent(){
+ if(!isManager())return false;
+ try{
+   const rows=contentRows().map(r=>({...r,updated_at:new Date().toISOString(),updated_by:currentUserId()}));
+   const {error}=await sb.from('iqnova_content_secure').upsert(rows,{onConflict:'kind,id'});if(error)throw error;
+   const keys=db.questions.map(q=>({question_id:q.id,correct:q.correct??null,answers:q.answers||[],updated_at:new Date().toISOString(),updated_by:currentUserId()}));
+   if(keys.length){const {error:ke}=await sb.from('iqnova_question_keys_secure').upsert(keys,{onConflict:'question_id'});if(ke)throw ke;}
+   const currentIds=new Set(db.questions.map(q=>q.id));
+   const {data:remoteKeys}=await sb.from('iqnova_question_keys_secure').select('question_id');
+   const stale=(remoteKeys||[]).map(x=>x.question_id).filter(id=>!currentIds.has(id));
+   if(stale.length){const {error:de}=await sb.from('iqnova_question_keys_secure').delete().in('question_id',stale);if(de)throw de;}
+   for(const kind of ['category','test','question']){
+     const ids=rows.filter(r=>r.kind===kind).map(r=>r.id);
+     if(ids.length){const {data:remote}=await sb.from('iqnova_content_secure').select('id').eq('kind',kind);const staleContent=(remote||[]).map(x=>x.id).filter(id=>!ids.includes(id));if(staleContent.length){const {error:de}=await sb.from('iqnova_content_secure').delete().eq('kind',kind).in('id',staleContent);if(de)throw de;}}
+     else {const {error:de}=await sb.from('iqnova_content_secure').delete().eq('kind',kind);if(de)throw de;}
+   }
+   cloudReady=true;return true;
+ }catch(e){console.error('Supabase content save failed',e);toast('ذخیره اطلاعات مدیریتی روی سرور انجام نشد.');return false;}
 }
 function queueCloudSave(){
  clearTimeout(cloudSaveTimer);
- cloudSaveTimer=setTimeout(cloudSave,450);
-}
-async function cloudSave(){
- try{
-  const payload={id:'main',data:db,updated_at:new Date().toISOString()};
-  const r=await fetch(SUPABASE_URL+'/rest/v1/iqnova_state?on_conflict=id',{method:'POST',headers:{...cloudHeaders(),'Prefer':'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(payload)});
-  if(!r.ok) throw new Error('cloud save '+r.status);
-  cloudReady=true;
- }catch(e){console.warn('Supabase save failed',e);}
+ if(isManager())cloudSaveTimer=setTimeout(()=>persistContent(),350);
+ else if(currentAttempt&&!currentAttempt.completed)cloudSaveTimer=setTimeout(()=>persistAttempt(currentAttempt),350);
 }
 async function initCloud(){
- const ok=await cloudLoad();
- applyTheme();
- renderHome();
- if(ok) toast('اتصال سرور برقرار شد.');
- else toast('اتصال سرور برقرار نشد؛ فعلاً اطلاعات محلی استفاده می‌شود.');
+ try{await ensureParticipantAuth();const ok=await loadRemote();applyTheme();renderHome();renderResults();if(ok)toast(isManager()?'اتصال امن مدیر برقرار شد.':'اتصال امن آزمون‌دهنده برقرار شد.');else toast('اتصال به سرور برقرار نشد؛ لطفاً اینترنت و تنظیمات Supabase را بررسی کن.');}
+ catch(e){console.error(e);toast('احراز هویت Supabase انجام نشد. Anonymous Auth را فعال کن.');}
+ booting=false;
 }
+
 function uid(prefix='id'){return prefix+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.remove('hidden');clearTimeout(window.__toast);window.__toast=setTimeout(()=>el.classList.add('hidden'),2600);}
-function deviceId(){let id=localStorage.getItem('iqnova_device_id');if(!id){id=uid('device');localStorage.setItem('iqnova_device_id',id);}return id;}
 
 function showView(id){
  if(id==='admin'&&!adminAuthed){adminLogin();return;}
@@ -388,11 +445,16 @@ function handleAction(action,id){
  if(action==='newTest')editTest(null);
  if(action==='publish')togglePublish(id);
  if(action==='duplicate')duplicateTest(id);
+ if(action==='deleteTest')deleteTest(id);
+ if(action==='deleteQuestion')deleteQuestion(id);
  if(action==='newQuestion')editQuestion(null);
  if(action==='editQuestion')editQuestion(id);
  if(action==='copyLink')copyText(testLink(id));
  if(action==='openLink')openDirectTestLink(id);
  if(action==='category')addCategory();
+ if(action==='editCategory')editCategory(Number(id));
+ if(action==='deleteCategory')deleteCategory(Number(id));
+ if(action==='logout')adminLogout();
  if(action==='backup')backup();
  if(action==='restore')document.getElementById('restoreInput').click();
  if(action==='password')changePassword();
@@ -407,7 +469,7 @@ function openTest(id){
  const completed=db.attempts.find(a=>a.testId===id&&a.deviceId===did&&a.completed);
  if(completed&&!t.multiple){toast('این آزمون قبلاً روی این دستگاه انجام شده است.');return;}
  openModal(`<h2>${esc(t.title)}</h2><p class="lead">${esc(t.welcome||'خوش آمدید! برای شروع آماده شوید.')}</p>
- <div class="test-link-box"><b>لینک این آزمون:</b><input readonly value="${esc(testLink(t.id))}"><button type="button" class="btn secondary" onclick="copyText(testLink('${t.id}'))">📋 کپی</button></div>
+ <div class="test-link-box"><b>لینک این آزمون:</b><input readonly value="${esc(testLink(t.id))}"><button type="button" class="btn secondary" data-action="copyLink" data-id="${esc(t.id)}">📋 کپی</button></div>
  <div class="stats"><div class="card stat"><strong>${t.questionIds.length}</strong><span>سؤال</span></div><div class="card stat"><strong>${t.duration||0}</strong><span>دقیقه</span></div><div class="card stat"><strong>${esc(t.difficulty||'متوسط')}</strong><span>سطح</span></div><div class="card stat"><strong>${t.multiple?'∞':'1'}</strong><span>تلاش</span></div></div>
  <div class="card" style="margin-top:15px"><b>قوانین آزمون</b><p class="muted">${esc(t.rules||'پاسخ‌ها را با دقت انتخاب کنید. پاسخ‌ها ذخیره می‌شوند.')}</p></div>
  <form id="participantForm" style="margin-top:18px"><div class="formgrid">
@@ -418,15 +480,21 @@ function openTest(id){
  document.getElementById('participantForm').addEventListener('submit',e=>startAttempt(e,t.id));
 }
 
-function startAttempt(e,testId){
- e.preventDefault();const t=db.tests.find(x=>x.id===testId),f=new FormData(e.target),did=deviceId();
+let lastAttemptSubmitAt=0;
+async function startAttempt(e,testId){
+ e.preventDefault();
+ if(Date.now()-lastAttemptSubmitAt<3000){toast('لطفاً چند ثانیه صبر کن و دوباره تلاش کن.');return;}
+ lastAttemptSubmitAt=Date.now();
+ if(!authUser?.id){toast('احراز هویت آزمون‌دهنده آماده نیست.');return;}
+ const t=db.tests.find(x=>x.id===testId),f=new FormData(e.target),did=deviceId();
+ const now=Date.now();
  let a=db.attempts.find(x=>x.testId===testId&&x.deviceId===did&&!x.completed);
  if(!a){
-  let order=[...t.questionIds];if(t.randomQuestions)order.sort(()=>Math.random()-.5);
-  a={id:uid('attempt'),testId,deviceId:did,first:f.get('first'),last:f.get('last'),age:f.get('age'),grade:f.get('grade'),notes:f.get('notes'),answers:{},index:0,start:Date.now(),completed:false,order};
-  db.attempts.push(a);saveDB();
- }else{a.first=f.get('first');a.last=f.get('last');a.age=f.get('age');a.grade=f.get('grade');a.notes=f.get('notes');saveDB();}
- closeModal();runExam(a.id);
+   let order=[...t.questionIds];if(t.randomQuestions)order.sort(()=>Math.random()-.5);
+   a={id:uid('attempt'),testId,deviceId:did,first:String(f.get('first')||'').trim(),last:String(f.get('last')||'').trim(),age:f.get('age'),grade:String(f.get('grade')||'').trim(),notes:String(f.get('notes')||'').trim(),answers:{},index:0,start:now,completed:false,order};
+   db.attempts.unshift(a);await persistAttempt(a);
+ }else{a.first=String(f.get('first')||'').trim();a.last=String(f.get('last')||'').trim();a.age=f.get('age');a.grade=String(f.get('grade')||'').trim();a.notes=String(f.get('notes')||'').trim();await persistAttempt(a);}
+ cacheDB();closeModal();runExam(a.id);
 }
 function runExam(aid){
  currentAttempt=db.attempts.find(a=>a.id===aid);const t=db.tests.find(x=>x.id===currentAttempt.testId);
@@ -470,35 +538,16 @@ function renderQuestion(){
  const fin=document.getElementById('finishQ');if(fin)fin.addEventListener('click',()=>finishAttempt(false));
  document.querySelectorAll('#qnav .qnum').forEach(b=>b.addEventListener('click',()=>{currentAttempt.index=Number(b.dataset.q);saveDB();renderQuestion();}));
 }
-function finishAttempt(auto){
+async function finishAttempt(auto){
  if(!currentAttempt||currentAttempt.completed)return;
- clearInterval(timer);const t=db.tests.find(x=>x.id===currentAttempt.testId);let score=0,total=0,correct=0,wrong=0,unanswered=0,manual=0;
- currentAttempt.order.forEach(id=>{
-   const q=db.questions.find(x=>x.id===id);if(!q)return;
-   const pts=Number(q.score||1);total+=pts;const a=currentAttempt.answers[id];
-   if(a===undefined||a===''||(Array.isArray(a)&&a.length===0)){unanswered++;return;}
-   if(q.type==='descriptive'){manual++;return;}
-   let ok=false;
-   if(q.type==='multimcq'){
-     const given=(Array.isArray(a)?a:[a]).map(Number).sort((x,y)=>x-y);
-     const correctSet=(Array.isArray(q.correct)?q.correct:[q.correct]).map(Number).sort((x,y)=>x-y);
-     ok=given.length===correctSet.length&&given.every((v,i)=>v===correctSet[i]);
-   }else if(q.type==='short'){
-     const normalize=v=>String(v??'').trim().toLowerCase().replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
-     ok=(q.answers||[]).map(normalize).filter(Boolean).includes(normalize(a));
-   }else ok=String(a)===String(Array.isArray(q.correct)?q.correct[0]:q.correct);
-   if(ok){score+=pts;correct++;}else wrong++;
- });
- const manualPoints=currentAttempt.order.reduce((n,id)=>{const q=db.questions.find(x=>x.id===id);return n+(q?.type==='descriptive'?Number(q.score||1):0)},0);
- const autoTotal=Math.max(0,total-manualPoints);
- currentAttempt.score=score;currentAttempt.total=total;currentAttempt.autoTotal=autoTotal;currentAttempt.percent=autoTotal?Math.round(score/autoTotal*100):0;
- currentAttempt.correct=correct;currentAttempt.wrong=wrong;currentAttempt.unanswered=unanswered;currentAttempt.manual=manual;
- currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);currentAttempt.completed=true;saveDB();
- if(t.showResult!==false){
-   showResult(currentAttempt.id);
- }else{
-   showPendingResult(currentAttempt.id);
- }
+ clearInterval(timer);
+ if(!authUser?.id){toast('شناسه امن آزمون‌دهنده آماده نیست.');return;}
+ currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);
+ const {data,error}=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
+ if(error){console.error(error);toast('ثبت نهایی آزمون انجام نشد. پاسخ‌ها حفظ شدند؛ دوباره تلاش کن.');return;}
+ currentAttempt=fromAttemptRow(data);db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];cacheDB();
+ const t=db.tests.find(x=>x.id===currentAttempt.testId);
+ if(t?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
 }
 function showPendingResult(aid){
  const a=db.attempts.find(x=>x.id===aid),t=db.tests.find(x=>x.id===a?.testId);
@@ -525,11 +574,15 @@ function showResult(aid){
  document.getElementById('resultsBtn').addEventListener('click',()=>showView('results'));
 }
 
-function adminLogin(){
- openModal(`<h2>ورود به پنل مدیریت</h2><p class="muted">میانبر پنل: Ctrl + Shift + Q</p><form id="adminForm"><div class="field"><label>نام کاربری</label><input name="u" required autocomplete="username"></div><div class="field" style="margin-top:12px"><label>رمز عبور</label><input name="p" type="password" required autocomplete="current-password"></div><button class="btn primary" style="margin-top:18px">ورود</button></form>`);
- document.getElementById('adminForm').addEventListener('submit',e=>{e.preventDefault();const f=new FormData(e.target);const expected=db.admin.password||btoa(unescape(encodeURIComponent('IQNova2026!')));if(f.get('u')==='admin'&&btoa(unescape(encodeURIComponent(f.get('p'))))===expected){adminAuthed=true;closeModal();showView('admin');toast('ورود موفق بود.');}else toast('نام کاربری یا رمز عبور اشتباه است.');});
+async function adminLogin(){
+ if(booting){toast('در حال آماده‌سازی اتصال امن...');return;}
+ openModal(`<h2>ورود به پنل مدیریت</h2><p class="muted">ورود با Supabase Auth انجام می‌شود.</p><form id="adminForm"><div class="field"><label>ایمیل مدیر</label><input name="email" type="email" required autocomplete="username" value="${esc(ADMIN_EMAIL)}"></div><div class="field" style="margin-top:12px"><label>رمز عبور</label><input name="p" type="password" required autocomplete="current-password"></div><button class="btn primary" style="margin-top:18px">ورود</button></form>`);
+ document.getElementById('adminForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);const email=String(f.get('email')||'').trim().toLowerCase();if(email!==ADMIN_EMAIL.toLowerCase()){toast('این ایمیل مدیر مجاز نیست.');return;}const {data,error}=await sb.auth.signInWithPassword({email,password:String(f.get('p')||'')});if(error){toast('ایمیل یا رمز عبور اشتباه است.');return;}authUser=data.user;adminAuthed=isManager();if(!adminAuthed){toast('این حساب مدیر نیست.');return;}await loadRemote();closeModal();showView('admin');toast('ورود امن مدیر موفق بود.');});
 }
 document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='q'){e.preventDefault();adminLogin();}});
+sb.auth.onAuthStateChange(async (_event,session)=>{authUser=session?.user||null;adminAuthed=isManager();if(authUser&&!booting){await loadRemote();if(!adminAuthed&&document.getElementById('admin').classList.contains('active'))showView('home');}});
+async function adminLogout(){await sb.auth.signOut();authUser=null;adminAuthed=false;try{await ensureParticipantAuth();await loadRemote();}catch(e){}showView('home');toast('از پنل مدیریت خارج شدی.');}
+
 
 function renderAdmin(tab='dashboard'){
  if(!adminAuthed)return;
@@ -548,6 +601,7 @@ function renderAdmin(tab='dashboard'){
       <button class="btn secondary" data-action="editTest" data-id="${t.id}">ویرایش</button>
       <button class="btn secondary" data-action="testResults" data-id="${t.id}">📊 نتایج</button>
       <button class="btn secondary" data-action="duplicate" data-id="${t.id}">تکثیر</button>
+      <button class="btn danger" data-action="deleteTest" data-id="${t.id}">حذف</button>
       <button class="btn primary" data-action="publish" data-id="${t.id}">${t.status==='published'?'لغو انتشار':'انتشار'}</button>
     </div>
   </div>
@@ -560,17 +614,17 @@ function renderAdmin(tab='dashboard'){
 </div>`).join(''):'<div class="card">هیچ آزمونی ساخته نشده است.</div>');
  }
  if(tab==='questions'){
-  c.innerHTML=`<div class="sectionhead"><div><h2>بانک سؤال</h2><p>سؤال‌ها را بساز و در آزمون‌ها استفاده کن.</p></div><button class="btn primary" data-action="newQuestion">+ سؤال جدید</button></div>`+(db.questions.length?db.questions.map(q=>`<div class="card" style="margin:12px 0"><h3>${esc(q.text)}</h3><p class="muted">${esc(q.type)} · ${esc(q.difficulty)} · ${q.score} امتیاز</p><button class="btn secondary" data-action="editQuestion" data-id="${q.id}">ویرایش</button></div>`).join(''):'<div class="card">بانک سؤال خالی است.</div>');
+  c.innerHTML=`<div class="sectionhead"><div><h2>بانک سؤال</h2><p>سؤال‌ها را بساز و در آزمون‌ها استفاده کن.</p></div><button class="btn primary" data-action="newQuestion">+ سؤال جدید</button></div>`+(db.questions.length?db.questions.map(q=>`<div class="card" style="margin:12px 0"><h3>${esc(q.text)}</h3><p class="muted">${esc(q.type)} · ${esc(q.difficulty)} · ${q.score} امتیاز</p><button class="btn secondary" data-action="editQuestion" data-id="${q.id}">ویرایش</button><button class="btn danger" data-action="deleteQuestion" data-id="${q.id}">حذف</button></div>`).join(''):'<div class="card">بانک سؤال خالی است.</div>');
  }
  if(tab==='participants'){
   c.innerHTML=`<div class="sectionhead"><div><h2>شرکت‌کنندگان</h2><p>تمام تلاش‌های ثبت‌شده.</p></div><button class="btn primary" data-action="backup">پشتیبان‌گیری</button></div><div class="card"><input id="participantSearch" placeholder="جستجوی نام یا آزمون..."><div class="tablewrap" style="margin-top:15px"><table class="table" id="participantsTable"><tr><th>نام</th><th>آزمون</th><th>تاریخ</th><th>وضعیت</th><th>درصد</th></tr>${db.attempts.map(a=>`<tr><td>${esc(a.first)} ${esc(a.last)}</td><td>${esc(db.tests.find(t=>t.id===a.testId)?.title||'')}</td><td>${new Date(a.start).toLocaleString('fa-IR')}</td><td>${a.completed?'تکمیل‌شده':'درحال انجام'}</td><td>${a.percent??'-'}%</td></tr>`).join('')}</table></div></div>`;
   document.getElementById('participantSearch').addEventListener('input',e=>{const s=e.target.value.toLowerCase();document.querySelectorAll('#participantsTable tr:not(:first-child)').forEach(r=>r.style.display=r.textContent.toLowerCase().includes(s)?'':'none');});
  }
  if(tab==='categories'){
-  c.innerHTML=`<div class="sectionhead"><div><h2>دسته‌بندی‌ها</h2><p>گروه‌های آزمون را مدیریت کن.</p></div><button class="btn primary" data-action="category">+ دسته جدید</button></div><div class="grid">${db.categories.map(x=>`<div class="card"><b>${esc(x)}</b></div>`).join('')}</div>`;
+  c.innerHTML=`<div class="sectionhead"><div><h2>دسته‌بندی‌ها</h2><p>گروه‌های آزمون را مدیریت کن.</p></div><button class="btn primary" data-action="category">+ دسته جدید</button></div><div class="grid">${db.categories.map((x,i)=>`<div class="card"><b>${esc(x)}</b><div class="actions" style="margin-top:12px"><button class="btn secondary" data-action="editCategory" data-id="${i}">ویرایش</button><button class="btn danger" data-action="deleteCategory" data-id="${i}">حذف</button></div></div>`).join('')}</div>`;
  }
  if(tab==='settings'){
-  c.innerHTML=`<div class="sectionhead"><div><h2>تنظیمات</h2><p>پشتیبان و تنظیمات پروژه.</p></div></div><div class="card"><div class="actions"><button class="btn primary" data-action="backup">Export / Backup</button><button class="btn secondary" data-action="restore">Import / Restore</button><button class="btn secondary" data-action="password">تغییر رمز مدیر</button></div><p class="muted" style="margin-top:18px">این نسخه به Supabase متصل است؛ اطلاعات آزمون‌ها و نتایج روی سرور ذخیره می‌شوند و LocalStorage فقط به‌عنوان حافظه موقت مرورگر استفاده می‌شود.</p></div>`;
+  c.innerHTML=`<div class="sectionhead"><div><h2>تنظیمات</h2><p>پشتیبان و تنظیمات پروژه.</p></div></div><div class="card"><div class="actions"><button class="btn primary" data-action="backup">Export / Backup</button><button class="btn secondary" data-action="restore">Import / Restore</button><button class="btn secondary" data-action="password">تغییر رمز مدیر</button><button class="btn danger" data-action="logout">خروج از پنل</button></div><p class="muted" style="margin-top:18px">احراز هویت مدیر با Supabase Auth انجام می‌شود؛ LocalStorage فقط کش موقت است و منبع اصلی داده‌ها Supabase است.</p></div>`;
  }
 }
 function testResultRows(testId){
@@ -772,7 +826,7 @@ function editQuestion(id, returnToTestId=null){
      canvas.height=Math.max(1,Math.round(img.height*scale));
      const ctx=canvas.getContext('2d');
      ctx.drawImage(img,0,0,canvas.width,canvas.height);
-     q.image=canvas.toDataURL('image/webp',0.88);
+     q.image=safeImageUrl(canvas.toDataURL('image/webp',0.88));
      refreshQuestionImage();
      toast('تصویر سؤال اضافه شد.');
    }catch(err){console.error(err);toast('خواندن تصویر انجام نشد.');}
@@ -826,7 +880,7 @@ function editQuestion(id, returnToTestId=null){
  renderAnswerBuilder();
  document.getElementById('cancelQuestion').onclick=closeModal;
  document.getElementById('questionForm').addEventListener('submit',e=>{
-   e.preventDefault();q.text=document.getElementById('qText').value.trim();q.score=Number(document.getElementById('qScore').value||1);q.difficulty=document.getElementById('qDifficulty').value;
+   e.preventDefault();q.text=document.getElementById('qText').value.trim();q.image=safeImageUrl(q.image);q.score=Number(document.getElementById('qScore').value||1);q.difficulty=document.getElementById('qDifficulty').value;
    if(!q.text){toast('متن سؤال را وارد کن.');return;}
    if(q.type==='mcq'&&(q.options.length!==4||!q.correct?.length)){toast('چهارگزینه‌ای باید دقیقاً ۴ گزینه و یک پاسخ صحیح داشته باشد.');return;}
    if(q.type==='multimcq'&&(q.options.length<2||!q.correct?.length)){toast('چندگزینه‌ای حداقل ۲ گزینه و یک پاسخ صحیح لازم دارد.');return;}
@@ -856,23 +910,27 @@ function typeLabel(type){
 }
 function addCategory(){const name=prompt('نام دسته جدید را وارد کنید:');if(name&&name.trim()){db.categories.push(name.trim());saveDB();renderAdmin('categories');toast('دسته اضافه شد.');}}
 async function changePassword(){
- const p=prompt('رمز جدید:');
- if(!p)return;
- db.admin.password=btoa(unescape(encodeURIComponent(p)));
- saveDB();
- if(cloudReady){
-   clearTimeout(cloudSaveTimer);
-   await cloudSave();
-   toast('رمز مدیر تغییر کرد و روی سرور ذخیره شد.');
- }else{
-   toast('رمز مدیر در مرورگر ذخیره شد؛ اتصال سرور در دسترس نیست.');
- }
+ if(!isManager()){toast('ابتدا به‌عنوان مدیر وارد شو.');return;}
+ const p=prompt('رمز عبور جدید را وارد کنید (حداقل ۸ کاراکتر):');
+ if(!p||p.length<8){toast('رمز باید حداقل ۸ کاراکتر باشد.');return;}
+ const {error}=await sb.auth.updateUser({password:p});
+ if(error){toast('تغییر رمز انجام نشد: '+error.message);return;}
+ toast('رمز مدیر در Supabase Auth تغییر کرد.');
 }
-function backup(){const blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='IQNova-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500);}
-document.getElementById('restoreInput').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=()=>{try{db=JSON.parse(r.result);saveDB();applyTheme();renderHome();if(adminAuthed)renderAdmin('dashboard');toast('پشتیبان بازیابی شد.');}catch(err){toast('فایل پشتیبان معتبر نیست.');}};r.readAsText(file);e.target.value='';});
+function backup(){
+ if(!isManager()){toast('فقط مدیر می‌تواند پشتیبان بگیرد.');return;}
+ const payload={version:3,exportedAt:new Date().toISOString(),data:db};
+ const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='IQNova-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500);
+}
+document.getElementById('restoreInput').addEventListener('change',e=>{const file=e.target.files[0];if(!file||!isManager())return;const r=new FileReader();r.onload=async()=>{try{const raw=JSON.parse(r.result),incoming=raw.data||raw;if(!Array.isArray(incoming.tests)||!Array.isArray(incoming.questions)||!Array.isArray(incoming.categories))throw new Error('bad backup');db={...clone(DEFAULTS),...incoming};sanitizeLoadedData();await persistContent();applyTheme();renderHome();renderTests();renderResults();renderAdmin('dashboard');toast('پشتیبان بازیابی و روی سرور ذخیره شد.');}catch(err){console.error(err);toast('فایل پشتیبان معتبر نیست.');}};r.readAsText(file);e.target.value='';});
 
-window.addEventListener('beforeunload',e=>{if(currentAttempt&&!currentAttempt.completed){saveDB();e.preventDefault();e.returnValue='آزمون شما ذخیره شده است.';}});
-renderHome();
+async function deleteTest(id){if(!isManager())return;const t=db.tests.find(x=>x.id===id);if(!t)return;if(!confirm(`آزمون «${t.title}» حذف شود؟ این عمل آزمون را از محتوای سایت حذف می‌کند.`))return;db.tests=db.tests.filter(x=>x.id!==id);await persistContent();renderAdmin('tests');renderHome();toast('آزمون حذف شد.');}
+async function deleteQuestion(id){if(!isManager())return;const q=db.questions.find(x=>x.id===id);if(!q)return;if(!confirm('این سؤال حذف شود؟'))return;db.questions=db.questions.filter(x=>x.id!==id);db.tests.forEach(t=>t.questionIds=(t.questionIds||[]).filter(x=>x!==id));await persistContent();renderAdmin('questions');toast('سؤال حذف شد.');}
+async function addCategory(){if(!isManager())return;const name=prompt('نام دسته جدید را وارد کنید:');if(name&&name.trim()){db.categories.push(name.trim());await persistContent();renderAdmin('categories');renderHome();toast('دسته اضافه شد.');}}
+async function editCategory(index){if(!isManager())return;const old=db.categories[index];const name=prompt('نام جدید دسته:',old);if(!name||!name.trim()||name.trim()===old)return;db.categories[index]=name.trim();db.tests.forEach(t=>{if(t.category===old)t.category=name.trim();});await persistContent();renderAdmin('categories');renderHome();}
+async function deleteCategory(index){if(!isManager())return;const name=db.categories[index];if(db.tests.some(t=>t.category===name)){toast('ابتدا آزمون‌های این دسته را به دسته دیگری منتقل کن.');return;}if(!confirm(`دسته «${name}» حذف شود؟`))return;db.categories.splice(index,1);await persistContent();renderAdmin('categories');renderHome();}
+
+window.addEventListener('beforeunload',e=>{if(currentAttempt&&!currentAttempt.completed){persistAttempt(currentAttempt);e.preventDefault();e.returnValue='آزمون شما ذخیره شده است.';}});
 initCloud().then(()=>{
  const linkedTest=new URLSearchParams(window.location.search).get('test');
  if(linkedTest && db.tests.some(x=>x.id===linkedTest)) openTest(linkedTest);
