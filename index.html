@@ -32,7 +32,7 @@ header{position:sticky;top:0;z-index:50;background:rgba(247,249,255,.76);backdro
 .nav{height:76px;display:flex;align-items:center;justify-content:space-between;gap:20px}
 .brand{display:flex;align-items:center;gap:12px;font-weight:900}
 .logo{width:46px;height:46px;border-radius:16px;display:grid;place-items:center;color:white;font-size:25px;background:linear-gradient(135deg,var(--primary),var(--primary2));box-shadow:0 12px 28px rgba(91,108,255,.32);position:relative}
-.logo:after{content:"";position:absolute;inset:5px;border:1px solid rgba(255,255,255,.35);border-radius:12px}
+.logo:after{content:"";position:absolute;inset:5px;border:1px solid rgba(255,255,255,.35);border-radius:12px}.logo img{width:100%;height:100%;object-fit:cover;border-radius:14px;display:block}.brand-preview{width:76px;height:76px;border-radius:20px;object-fit:cover;border:1px solid var(--line);background:#eef4ff;display:block}.asset-thumb{width:54px;height:54px;border-radius:16px;object-fit:cover;border:1px solid var(--line);background:#eef4ff;display:block}.asset-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--line)}.asset-row:last-child{border-bottom:0}.asset-meta{display:flex;align-items:center;gap:14px}.asset-actions{display:flex;gap:8px;flex-wrap:wrap}
 .brand small{display:block;color:var(--muted);font-size:11px;margin-top:1px;font-weight:600}
 .navlinks{display:flex;gap:5px;align-items:center}
 .navlinks button,.iconbtn{border:0;background:transparent;color:var(--muted);padding:10px 13px;border-radius:12px;font-weight:700}
@@ -196,7 +196,7 @@ footer{padding:35px 0;border-top:1px solid var(--line);color:var(--muted)}
 <header>
  <div class="container nav">
   <button class="brand" data-nav="home" style="border:0;background:none;text-align:right">
-   <span class="logo">🧠</span><span><b>IQNova</b><small>آزمایشگاه هوش، منطق و مهارت</small></span>
+   <span class="logo" id="siteLogo"><span aria-hidden="true">🧠</span></span><span><b>IQNova</b><small>آزمایشگاه هوش، منطق و مهارت</small></span>
   </button>
   <nav class="navlinks">
    <button data-nav="home" class="active">خانه</button><button data-nav="tests">آزمون‌ها</button><button data-nav="results">نتایج من</button><button data-nav="about">درباره</button>
@@ -252,7 +252,7 @@ const ADMIN_EMAIL='admin@iqnova.local';
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
 const DEFAULTS={
  categories:['هوش و IQ','منطق','ریاضی و عددی','الگوهای تصویری','تمرکز','حل مسئله','اطلاعات عمومی','سرگرمی'],
- tests:[],questions:[],attempts:[],settings:{theme:'light'},admin:{username:'admin',password:null}
+ tests:[],questions:[],attempts:[],settings:{theme:'light',brandAssets:{logo:'',categories:{}}},admin:{username:'admin',password:null}
 };
 let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null, authUser=null, booting=true;
 
@@ -265,7 +265,7 @@ function currentUserId(){return authUser?.id||null;}
 function deviceId(){return currentUserId()||'anonymous';}
 function safeQuestion(q){const x=clone(q||{});delete x.correct;delete x.answers;delete x.id;return x;}
 function safeImageUrl(v){const s=String(v??'').trim();if(!s)return '';if(/^https?:\/\//i.test(s))return s;if(/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(s))return s;return '';}
-function sanitizeLoadedData(){db.questions.forEach(q=>{q.image=safeImageUrl(q.image);});db.tests.forEach(t=>{t.title=String(t.title||'').trim();t.description=String(t.description||'');t.welcome=String(t.welcome||'');t.rules=String(t.rules||'');});}
+function sanitizeLoadedData(){db.questions.forEach(q=>{q.image=safeImageUrl(q.image);});db.tests.forEach(t=>{t.title=String(t.title||'').trim();t.description=String(t.description||'');t.welcome=String(t.welcome||'');t.rules=String(t.rules||'');});db.settings={...clone(DEFAULTS.settings),...(db.settings||{}),brandAssets:{...clone(DEFAULTS.settings.brandAssets),...(db.settings?.brandAssets||{}),categories:{...(db.settings?.brandAssets?.categories||{})}}};if(typeof db.settings.brandAssets.logo!=='string')db.settings.brandAssets.logo='';Object.keys(db.settings.brandAssets.categories||{}).forEach(k=>{db.settings.brandAssets.categories[k]=safeImageUrl(db.settings.brandAssets.categories[k]);});}
 function safeTest(t){const x=clone(t||{});delete x.id;return x;}
 function contentRows(){
  const rows=[];
@@ -291,7 +291,7 @@ async function loadRemote(){
    const tests=rows.filter(r=>r.kind==='test').map(r=>({id:r.id,...(r.data||{})}));
    const questions=rows.filter(r=>r.kind==='question').map(r=>({id:r.id,...(r.data||{})}));
    const settings=rows.find(r=>r.kind==='settings'&&r.id==='main')?.data||{};
-   db={...clone(DEFAULTS),...db,categories:cats.length?cats:clone(DEFAULTS.categories),tests,questions,settings:{...clone(DEFAULTS.settings),...settings},attempts:[]};
+   db={...clone(DEFAULTS),...db,categories:cats.length?cats:clone(DEFAULTS.categories),tests,questions,settings:{...clone(DEFAULTS.settings),...settings,brandAssets:{...clone(DEFAULTS.settings.brandAssets),...(settings?.brandAssets||{}),categories:{...clone(DEFAULTS.settings.brandAssets.categories),...(settings?.brandAssets?.categories||{})}}},attempts:[]};
    sanitizeLoadedData();
    if(isManager()){
      const [{data:keys,error:ke},{data:attempts,error:ae}]=await Promise.all([
@@ -348,7 +348,7 @@ function queueCloudSave(){
  else if(currentAttempt&&!currentAttempt.completed)cloudSaveTimer=setTimeout(()=>persistAttempt(currentAttempt),350);
 }
 async function initCloud(){
- try{await ensureParticipantAuth();const ok=await loadRemote();applyTheme();renderHome();renderResults();if(ok)toast(isManager()?'اتصال امن مدیر برقرار شد.':'اتصال امن آزمون‌دهنده برقرار شد.');else toast('اتصال به سرور برقرار نشد؛ لطفاً اینترنت و تنظیمات Supabase را بررسی کن.');}
+ try{await ensureParticipantAuth();const ok=await loadRemote();applyTheme();applyBranding();renderHome();renderResults();if(ok)toast(isManager()?'اتصال امن مدیر برقرار شد.':'اتصال امن آزمون‌دهنده برقرار شد.');else toast('اتصال به سرور برقرار نشد؛ لطفاً اینترنت و تنظیمات Supabase را بررسی کن.');}
  catch(e){console.error(e);toast('احراز هویت Supabase انجام نشد. Anonymous Auth را فعال کن.');}
  booting=false;
 }
@@ -374,6 +374,15 @@ document.getElementById('themeBtn').addEventListener('click',()=>{
  db.settings.theme=db.settings.theme==='dark'?'light':'dark';applyTheme();saveDB();
 });
 function applyTheme(){document.body.classList.toggle('dark',db.settings.theme==='dark');document.getElementById('themeBtn').textContent=db.settings.theme==='dark'?'☀':'☾';}
+function getCategoryAsset(name){return safeImageUrl(db.settings?.brandAssets?.categories?.[name]||'');}
+function applyBranding(){
+ const logo= safeImageUrl(db.settings?.brandAssets?.logo||'');
+ const el=document.getElementById('siteLogo');
+ if(el) el.innerHTML=logo?`<img src="${esc(logo)}" alt="لوگوی IQNova">`:'<span aria-hidden="true">🧠</span>';
+ let icon=document.getElementById('siteFavicon');
+ if(!icon){icon=document.createElement('link');icon.id='siteFavicon';icon.rel='icon';document.head.appendChild(icon);}
+ if(logo) icon.href=logo;
+}
 applyTheme();
 
 const catIcons=['🧠','🧩','🔢','🔷','🎯','💡','🌐','🎮'];
@@ -401,7 +410,7 @@ function openDirectTestLink(id){
  window.location.href=testLink(id);
 }
 function renderHome(){
- document.getElementById('categories').innerHTML=db.categories.map((c,i)=>`<div class="card category"><div class="icon">${catIcons[i%catIcons.length]}</div><h3>${esc(c)}</h3><p class="muted">تمرین و سنجش مهارت در ${esc(c)}</p></div>`).join('');
+ document.getElementById('categories').innerHTML=db.categories.map((c,i)=>{const img=getCategoryAsset(c);const icon=img?`<img src="${esc(img)}" alt="${esc(c)}" style="width:100%;height:100%;object-fit:contain;border-radius:14px">`:catIcons[i%catIcons.length];return `<div class="card category"><div class="icon">${icon}</div><h3>${esc(c)}</h3><p class="muted">تمرین و سنجش مهارت در ${esc(c)}</p></div>`;}).join('');
  const pub=db.tests.filter(t=>t.status==='published'&&t.visibility!=='private').slice(0,4);
  document.getElementById('homeTests').innerHTML=pub.length?pub.map(testCard).join(''):`<div class="card"><h3>هنوز آزمونی منتشر نشده است</h3><p class="muted">از پنل مدیریت اولین آزمون را بساز.</p></div>`;
  renderStats(document.getElementById('homeStats'));
@@ -411,7 +420,9 @@ function renderTests(){
  document.getElementById('testsGrid').innerHTML=pub.length?pub.map(testCard).join(''):`<div class="card"><h3>آزمون منتشرشده‌ای وجود ندارد.</h3><p class="muted">برای ساخت آزمون وارد پنل مدیریت شو.</p></div>`;
 }
 function testCard(t){
- return `<div class="card test"><div class="cover">🧠</div><span class="pill">${esc(t.category||'عمومی')}</span><h3>${esc(t.title)}</h3><p class="muted">${esc(t.description||'آزمون هوش و مهارت')}</p><p class="muted">❓ ${t.questionIds?.length||0} سؤال · ⏱ ${t.duration||0} دقیقه · ${esc(t.difficulty||'متوسط')}</p><button class="btn primary" data-action="openTest" data-id="${esc(t.id)}">شروع آزمون</button></div>`;
+ const img=getCategoryAsset(t.category);
+ const cover=img?`<img src="${esc(img)}" alt="${esc(t.category||'آزمون')}" style="width:100%;height:100%;object-fit:contain">`:'🧠';
+ return `<div class="card test"><div class="cover">${cover}</div><span class="pill">${esc(t.category||'عمومی')}</span><h3>${esc(t.title)}</h3><p class="muted">${esc(t.description||'آزمون هوش و مهارت')}</p><p class="muted">❓ ${t.questionIds?.length||0} سؤال · ⏱ ${t.duration||0} دقیقه · ${esc(t.difficulty||'متوسط')}</p><button class="btn primary" data-action="openTest" data-id="${esc(t.id)}">شروع آزمون</button></div>`;
 }
 function renderStats(el){
  const pub=db.tests.filter(t=>t.status==='published').length;
@@ -580,9 +591,36 @@ async function adminLogin(){
  document.getElementById('adminForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);const email=String(f.get('email')||'').trim().toLowerCase();if(email!==ADMIN_EMAIL.toLowerCase()){toast('این ایمیل مدیر مجاز نیست.');return;}const {data,error}=await sb.auth.signInWithPassword({email,password:String(f.get('p')||'')});if(error){toast('ایمیل یا رمز عبور اشتباه است.');return;}authUser=data.user;adminAuthed=isManager();if(!adminAuthed){toast('این حساب مدیر نیست.');return;}await loadRemote();closeModal();showView('admin');toast('ورود امن مدیر موفق بود.');});
 }
 document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='q'){e.preventDefault();adminLogin();}});
-sb.auth.onAuthStateChange(async (_event,session)=>{authUser=session?.user||null;adminAuthed=isManager();if(authUser&&!booting){await loadRemote();if(!adminAuthed&&document.getElementById('admin').classList.contains('active'))showView('home');}});
+sb.auth.onAuthStateChange(async (_event,session)=>{authUser=session?.user||null;adminAuthed=isManager();if(authUser&&!booting){await loadRemote();applyBranding();renderHome();renderTests();if(!adminAuthed&&document.getElementById('admin').classList.contains('active'))showView('home');}});
 async function adminLogout(){await sb.auth.signOut();authUser=null;adminAuthed=false;try{await ensureParticipantAuth();await loadRemote();}catch(e){}showView('home');toast('از پنل مدیریت خارج شدی.');}
 
+
+async function uploadBrandAsset(assetKey,file){
+ if(!isManager()){toast('فقط مدیر می‌تواند تصویر سایت را تغییر دهد.');return;}
+ if(!file||!/^image\/(png|jpeg|gif|webp)$/i.test(file.type)){toast('فقط PNG، JPG، GIF یا WEBP مجاز است.');return;}
+ if(file.size>5*1024*1024){toast('حجم تصویر باید حداکثر ۵ مگابایت باشد.');return;}
+ try{
+   const ext=(file.type.split('/')[1]||'png').replace('jpeg','jpg');
+   const path=assetKey==='logo'?'branding/logo':`branding/category-${slug(assetKey)}`;
+   const filePath=`${path}.${ext}`;
+   const {error}=await sb.storage.from('iqnova-assets').upload(filePath,file,{upsert:true,contentType:file.type,cacheControl:'3600'});
+   if(error)throw error;
+   const {data}=sb.storage.from('iqnova-assets').getPublicUrl(filePath);
+   const url=data?.publicUrl||'';
+   if(assetKey==='logo')db.settings.brandAssets.logo=url;
+   else db.settings.brandAssets.categories[assetKey]=url;
+   sanitizeLoadedData();saveDB();applyBranding();renderHome();renderTests();renderAdmin('settings');toast('تصویر با موفقیت ذخیره شد.');
+ }catch(e){console.error(e);toast('آپلود تصویر انجام نشد. بررسی کن Storage و دسترسی مدیر فعال باشد.');}
+}
+function removeBrandAsset(assetKey){
+ if(assetKey==='logo')db.settings.brandAssets.logo='';
+ else delete db.settings.brandAssets.categories[assetKey];
+ saveDB();applyBranding();renderHome();renderTests();renderAdmin('settings');toast('تصویر به حالت پیش‌فرض برگشت.');
+}
+function bindBrandAssetInputs(){
+ document.querySelectorAll('[data-brand-file]').forEach(input=>input.addEventListener('change',async e=>{const key=e.target.dataset.brandFile;await uploadBrandAsset(key,e.target.files?.[0]);e.target.value='';}));
+ document.querySelectorAll('[data-brand-remove]').forEach(btn=>btn.addEventListener('click',()=>removeBrandAsset(btn.dataset.brandRemove)));
+}
 
 function renderAdmin(tab='dashboard'){
  if(!adminAuthed)return;
@@ -624,7 +662,10 @@ function renderAdmin(tab='dashboard'){
   c.innerHTML=`<div class="sectionhead"><div><h2>دسته‌بندی‌ها</h2><p>گروه‌های آزمون را مدیریت کن.</p></div><button class="btn primary" data-action="category">+ دسته جدید</button></div><div class="grid">${db.categories.map((x,i)=>`<div class="card"><b>${esc(x)}</b><div class="actions" style="margin-top:12px"><button class="btn secondary" data-action="editCategory" data-id="${i}">ویرایش</button><button class="btn danger" data-action="deleteCategory" data-id="${i}">حذف</button></div></div>`).join('')}</div>`;
  }
  if(tab==='settings'){
-  c.innerHTML=`<div class="sectionhead"><div><h2>تنظیمات</h2><p>پشتیبان و تنظیمات پروژه.</p></div></div><div class="card"><div class="actions"><button class="btn primary" data-action="backup">Export / Backup</button><button class="btn secondary" data-action="restore">Import / Restore</button><button class="btn secondary" data-action="password">تغییر رمز مدیر</button><button class="btn danger" data-action="logout">خروج از پنل</button></div><p class="muted" style="margin-top:18px">احراز هویت مدیر با Supabase Auth انجام می‌شود؛ LocalStorage فقط کش موقت است و منبع اصلی داده‌ها Supabase است.</p></div>`;
+  const logo=db.settings?.brandAssets?.logo||'';
+  const assetRows=[`<div class="asset-row"><div class="asset-meta">${logo?`<img class="asset-thumb" src="${esc(logo)}" alt="لوگو">`:'<div class="asset-thumb" style="display:grid;place-items:center;font-size:26px">🧠</div>'}<div><b>لوگوی اصلی سایت</b><div class="muted">لوگوی هدر و آیکون سایت</div></div></div><div class="asset-actions"><label class="btn secondary" style="cursor:pointer">تغییر تصویر<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-brand-file="logo" hidden></label>${logo?'<button class="btn danger" data-brand-remove="logo">بازنشانی</button>':''}</div></div>`, ...db.categories.map((name,i)=>{const url=getCategoryAsset(name);const fallback=catIcons[i%catIcons.length];return `<div class="asset-row"><div class="asset-meta">${url?`<img class="asset-thumb" src="${esc(url)}" alt="${esc(name)}">`:`<div class="asset-thumb" style="display:grid;place-items:center;font-size:26px">${fallback}</div>`}<div><b>آیکون ${esc(name)}</b><div class="muted">در صفحه اصلی و کارت آزمون‌های این دسته</div></div></div><div class="asset-actions"><label class="btn secondary" style="cursor:pointer">تغییر تصویر<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-brand-file="${esc(name)}" hidden></label>${url?`<button class="btn danger" data-brand-remove="${esc(name)}">بازنشانی</button>`:''}</div></div>`;})];
+  c.innerHTML=`<div class="sectionhead"><div><h2>تنظیمات</h2><p>پشتیبان، امنیت و ظاهر سایت.</p></div></div><div class="card"><div class="actions"><button class="btn primary" data-action="backup">Export / Backup</button><button class="btn secondary" data-action="restore">Import / Restore</button><button class="btn secondary" data-action="password">تغییر رمز مدیر</button><button class="btn danger" data-action="logout">خروج از پنل</button></div><p class="muted" style="margin-top:18px">احراز هویت مدیر با Supabase Auth انجام می‌شود؛ LocalStorage فقط کش موقت است و منبع اصلی داده‌ها Supabase است.</p></div><div class="card" style="margin-top:18px"><h3>🎨 مدیریت لوگو و آیکون‌ها</h3><p class="muted">تصاویر در Supabase Storage ذخیره می‌شوند و بعد از تغییر، برای همه بازدیدکنندگان سایت نمایش داده می‌شوند.</p>${assetRows.join('')}</div>`;
+  bindBrandAssetInputs();
  }
 }
 function testResultRows(testId){
