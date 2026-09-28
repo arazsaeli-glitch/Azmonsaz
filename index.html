@@ -313,15 +313,42 @@ async function loadRemote(){
 function fromAttemptRow(r){return {id:r.id,testId:r.test_id,deviceId:r.user_id,first:r.first_name,last:r.last_name,age:r.age,grade:r.grade,notes:r.notes,answers:r.answers||{},index:0,start:new Date(r.started_at).getTime(),completed:r.status==='completed',order:r.question_order||[],completedAt:r.completed_at?new Date(r.completed_at).getTime():null,duration:r.duration_seconds,score:Number(r.score||0),total:Number(r.total||0),autoTotal:Number(r.auto_total||0),percent:Number(r.percent||0),correct:r.correct||0,wrong:r.wrong||0,unanswered:r.unanswered||0,manual:r.manual||0};}
 function toAttemptRow(a){return {id:a.id,user_id:currentUserId(),test_id:a.testId,first_name:String(a.first||'').trim(),last_name:String(a.last||'').trim(),age:a.age?Number(a.age):null,grade:a.grade||null,notes:a.notes||null,answers:a.answers||{},question_order:a.order||[],started_at:new Date(a.start||Date.now()).toISOString(),completed_at:a.completed&&a.completedAt?new Date(a.completedAt).toISOString():null,duration_seconds:a.duration||null,status:a.completed?'completed':'in_progress',score:a.completed?Number(a.score||0):0,total:a.completed?Number(a.total||0):0,auto_total:a.completed?Number(a.autoTotal||0):0,percent:a.completed?Number(a.percent||0):0,correct:a.completed?Number(a.correct||0):0,wrong:a.completed?Number(a.wrong||0):0,unanswered:a.completed?Number(a.unanswered||0):0,manual:a.completed?Number(a.manual||0):0};}
 async function persistAttempt(a){
- if(!currentUserId()||!a)return false;
+ if(!a)return false;
+ if(!authUser?.id){
+   try{await ensureParticipantAuth();}catch(e){console.error('Participant auth unavailable:',e);}
+ }
+ if(!currentUserId())return false;
  const row=toAttemptRow(a);
  if(a.completed){
    // Finalized attempts are written by the server-side RPC only.
    return true;
  }
- const {error}=await sb.from('iqnova_attempts_secure').upsert(row,{onConflict:'id'});
- if(error){console.error(error);toast('ذخیره آزمون روی سرور انجام نشد.');return false;}
- cloudReady=true;return true;
+ try{
+   const {data:existing,error:findError}=await sb
+     .from('iqnova_attempts_secure')
+     .select('id,user_id,status')
+     .eq('id',a.id)
+     .maybeSingle();
+   if(findError)throw findError;
+
+   if(!existing){
+     const {error}=await sb.from('iqnova_attempts_secure').insert(row);
+     if(error)throw error;
+   }else if(existing.user_id===currentUserId() && existing.status==='in_progress'){
+     const {error}=await sb.from('iqnova_attempts_secure').update(row).eq('id',a.id).eq('user_id',currentUserId());
+     if(error)throw error;
+   }else{
+     console.error('Attempt ownership conflict:',existing);
+     toast('این آزمون به نشست دیگری تعلق دارد. لطفاً آزمون را دوباره شروع کن.');
+     return false;
+   }
+   cloudReady=true;
+   return true;
+ }catch(error){
+   console.error('Attempt save failed:',error);
+   toast('ذخیره آزمون روی سرور انجام نشد. اتصال اینترنت و نشست آزمون را بررسی کن.');
+   return false;
+ }
 }
 async function persistContent(){
  if(!isManager())return false;
@@ -555,20 +582,41 @@ async function finishAttempt(auto){
   finalizingAttemptId=currentAttempt.id;
   clearInterval(timer);
   try{
-    if(!authUser?.id){
+    // نشست واقعی Supabase را درست قبل از ثبت نهایی دوباره می‌خوانیم.
+    let sessionData=null;
+    try{
+      const sessionResult=await sb.auth.getSession();
+      sessionData=sessionResult.data?.session||null;
+    }catch(e){console.error('Session check failed:',e);}
+    if(sessionData?.user){
+      authUser=sessionData.user;
+      adminAuthed=isManager();
+    }else if(!authUser?.id){
       try{await ensureParticipantAuth();}catch(e){console.error('Participant auth refresh failed:',e);}
     }
-    if(!authUser?.id){toast('شناسه امن آزمون‌دهنده آماده نیست.');return;}
+    if(!authUser?.id){toast('شناسه امن آزمون‌دهنده آماده نیست. لطفاً صفحه را یک‌بار تازه‌سازی کن.');return;}
+
     currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);
 
+    // ابتدا مطمئن می‌شویم همین attempt متعلق به همین نشست است و واقعاً روی سرور وجود دارد.
     const saved=await persistAttempt(currentAttempt);
-    if(!saved){toast('پاسخ‌های آزمون روی سرور ذخیره نشد. اتصال اینترنت را بررسی کن و دوباره تلاش کن.');return;}
+    if(!saved)return;
 
-    try{await sb.auth.getSession();}catch(e){console.warn('Session check failed:',e);}
+    // RPC سمت سرور امتیازدهی و نهایی‌سازی را انجام می‌دهد.
+    let result=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
+    if(result.error){
+      console.error('Finalize attempt failed:',result.error);
+      // یک بار نشست را تازه می‌کنیم و دوباره تلاش می‌کنیم؛ این حالت خطای انقضای session را هم پوشش می‌دهد.
+      const refreshed=await sb.auth.getSession();
+      if(refreshed.data?.session?.user){
+        authUser=refreshed.data.session.user;
+        result=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
+      }
+    }
 
-    const {data,error}=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
-    if(error||!data){
-      console.error('Finalize attempt failed:',error||'RPC returned no data');
+    if(result.error||!result.data){
+      console.error('Finalize attempt failed:',result.error||'RPC returned no data');
+      // اگر RPC قبلاً موفق شده ولی پاسخ در مسیر گم شده باشد، نتیجه تکمیل‌شده را بازیابی می‌کنیم.
       try{
         const {data:recovered,error:recoverError}=await sb
           .from('iqnova_attempts_secure')
@@ -576,7 +624,6 @@ async function finishAttempt(auto){
           .eq('id',currentAttempt.id)
           .eq('user_id',authUser.id)
           .maybeSingle();
-
         if(!recoverError && recovered?.status==='completed'){
           currentAttempt=fromAttemptRow(recovered);
           db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
@@ -590,7 +637,7 @@ async function finishAttempt(auto){
       return;
     }
 
-    const resultRow=Array.isArray(data)?data[0]:data;
+    const resultRow=Array.isArray(result.data)?result.data[0]:result.data;
     if(!resultRow){toast('نتیجه نهایی از سرور دریافت نشد؛ پاسخ‌ها حفظ شدند.');return;}
 
     currentAttempt=fromAttemptRow(resultRow);
