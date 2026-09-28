@@ -244,7 +244,7 @@ footer{padding:35px 0;border-top:1px solid var(--line);color:var(--muted)}
 <script>
 'use strict';
 
-const KEY='iqnova_secure_v3';
+const KEY='iqnova_secure_v4';
 const SUPABASE_URL='https://wardcoesaoecgixzvelq.supabase.co';
 const SUPABASE_KEY='sb_publishable_vKj0adiNq5ZqqAvI2kl_Fg_nmkqWaGq';
 // This must match the email inserted into public.iqnova_admins in Supabase.
@@ -254,7 +254,7 @@ const DEFAULTS={
  categories:['هوش و IQ','منطق','ریاضی و عددی','الگوهای تصویری','تمرکز','حل مسئله','اطلاعات عمومی','سرگرمی'],
  tests:[],questions:[],attempts:[],settings:{theme:'light',brandAssets:{logo:'',categories:{}}},admin:{username:'admin',password:null}
 };
-let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null, authUser=null, booting=true;
+let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null, authUser=null, booting=true, finalizingAttemptId=null;
 
 function clone(x){return JSON.parse(JSON.stringify(x));}
 function loadDB(){try{const saved=JSON.parse(localStorage.getItem(KEY)||'null');return {...clone(DEFAULTS),...(saved||{}),settings:{...DEFAULTS.settings,...(saved?.settings||{})}};}catch(e){return clone(DEFAULTS);}}
@@ -283,45 +283,69 @@ async function ensureParticipantAuth(){
  if(error)throw error;
  authUser=anon.user;adminAuthed=false;return authUser;
 }
+async function loadRemote(){
+ try{
+   const {data:rows,error}=await sb.from('iqnova_content_secure').select('kind,id,data').order('kind').order('id');
+   if(error)throw error;
+   const cats=rows.filter(r=>r.kind==='category').map(r=>r.data?.name).filter(Boolean);
+   const tests=rows.filter(r=>r.kind==='test').map(r=>({id:r.id,...(r.data||{})}));
+   const questions=rows.filter(r=>r.kind==='question').map(r=>({id:r.id,...(r.data||{})}));
+   const settings=rows.find(r=>r.kind==='settings'&&r.id==='main')?.data||{};
+   db={...clone(DEFAULTS),...db,categories:cats.length?cats:clone(DEFAULTS.categories),tests,questions,settings:{...clone(DEFAULTS.settings),...settings,brandAssets:{...clone(DEFAULTS.settings.brandAssets),...(settings?.brandAssets||{}),categories:{...clone(DEFAULTS.settings.brandAssets.categories),...(settings?.brandAssets?.categories||{})}}},attempts:[]};
+   sanitizeLoadedData();
+   if(isManager()){
+     const [{data:keys,error:ke},{data:attempts,error:ae}]=await Promise.all([
+       sb.from('iqnova_question_keys_secure').select('question_id,correct,answers'),
+       sb.from('iqnova_attempts_secure').select('*').order('started_at',{ascending:false})
+     ]);
+     if(ke)throw ke;if(ae)throw ae;
+     const km=new Map((keys||[]).map(k=>[k.question_id,k]));
+     db.questions.forEach(q=>{const k=km.get(q.id);if(k){q.correct=k.correct;q.answers=k.answers||[];}});
+     db.attempts=(attempts||[]).map(fromAttemptRow);
+   }else{
+     const {data:attempts,error:ae}=await sb.from('iqnova_attempts_secure').select('*').order('started_at',{ascending:false});
+     if(ae)throw ae;
+     db.attempts=(attempts||[]).map(fromAttemptRow);
+   }
+   cacheDB();cloudReady=true;return true;
+ }catch(e){console.error('Supabase load failed',e);cloudReady=false;return false;}
+}
+function fromAttemptRow(r){return {id:r.id,testId:r.test_id,deviceId:r.user_id,first:r.first_name,last:r.last_name,age:r.age,grade:r.grade,notes:r.notes,answers:r.answers||{},index:0,start:new Date(r.started_at).getTime(),completed:r.status==='completed',order:r.question_order||[],completedAt:r.completed_at?new Date(r.completed_at).getTime():null,duration:r.duration_seconds,score:Number(r.score||0),total:Number(r.total||0),autoTotal:Number(r.auto_total||0),percent:Number(r.percent||0),correct:r.correct||0,wrong:r.wrong||0,unanswered:r.unanswered||0,manual:r.manual||0};}
+function toAttemptRow(a){return {id:a.id,user_id:currentUserId(),test_id:a.testId,first_name:String(a.first||'').trim(),last_name:String(a.last||'').trim(),age:a.age?Number(a.age):null,grade:a.grade||null,notes:a.notes||null,answers:a.answers||{},question_order:a.order||[],started_at:new Date(a.start||Date.now()).toISOString(),completed_at:a.completed&&a.completedAt?new Date(a.completedAt).toISOString():null,duration_seconds:a.duration||null,status:a.completed?'completed':'in_progress',score:a.completed?Number(a.score||0):0,total:a.completed?Number(a.total||0):0,auto_total:a.completed?Number(a.autoTotal||0):0,percent:a.completed?Number(a.percent||0):0,correct:a.completed?Number(a.correct||0):0,wrong:a.completed?Number(a.wrong||0):0,unanswered:a.completed?Number(a.unanswered||0):0,manual:a.completed?Number(a.manual||0):0};}
+async function persistAttempt(a){
+ if(!currentUserId()||!a)return false;
+ const row=toAttemptRow(a);
+ if(a.completed){
+   // Finalized attempts are written by the server-side RPC only.
+   return true;
+ }
+ const {error}=await sb.from('iqnova_attempts_secure').upsert(row,{onConflict:'id'});
+ if(error){console.error(error);toast('ذخیره آزمون روی سرور انجام نشد.');return false;}
+ cloudReady=true;return true;
+}
 async function persistContent(){
  if(!isManager())return false;
  try{
    const rows=contentRows().map(r=>({...r,updated_at:new Date().toISOString(),updated_by:currentUserId()}));
+   const {error}=await sb.from('iqnova_content_secure').upsert(rows,{onConflict:'kind,id'});if(error)throw error;
    const keys=db.questions.map(q=>({question_id:q.id,correct:q.correct??null,answers:q.answers||[],updated_at:new Date().toISOString(),updated_by:currentUserId()}));
-
-   // Upload content and answer keys at the same time.
-   const writes=[sb.from('iqnova_content_secure').upsert(rows,{onConflict:'kind,id'})];
-   if(keys.length)writes.push(sb.from('iqnova_question_keys_secure').upsert(keys,{onConflict:'question_id'}));
-   const writeResults=await Promise.all(writes);
-   for(const r of writeResults)if(r.error)throw r.error;
-
-   // Discover stale rows in parallel.
-   const [remoteKeysRes,...remoteContentRes]=await Promise.all([
-     sb.from('iqnova_question_keys_secure').select('question_id'),
-     ...['category','test','question'].map(kind=>sb.from('iqnova_content_secure').select('id').eq('kind',kind))
-   ]);
-   if(remoteKeysRes.error)throw remoteKeysRes.error;
-   for(const r of remoteContentRes)if(r.error)throw r.error;
-
-   const deletes=[];
+   if(keys.length){const {error:ke}=await sb.from('iqnova_question_keys_secure').upsert(keys,{onConflict:'question_id'});if(ke)throw ke;}
    const currentIds=new Set(db.questions.map(q=>q.id));
-   const staleKeys=(remoteKeysRes.data||[]).map(x=>x.question_id).filter(id=>!currentIds.has(id));
-   if(staleKeys.length)deletes.push(sb.from('iqnova_question_keys_secure').delete().in('question_id',staleKeys));
-   ['category','test','question'].forEach((kind,i)=>{
+   const {data:remoteKeys}=await sb.from('iqnova_question_keys_secure').select('question_id');
+   const stale=(remoteKeys||[]).map(x=>x.question_id).filter(id=>!currentIds.has(id));
+   if(stale.length){const {error:de}=await sb.from('iqnova_question_keys_secure').delete().in('question_id',stale);if(de)throw de;}
+   for(const kind of ['category','test','question']){
      const ids=rows.filter(r=>r.kind===kind).map(r=>r.id);
-     const remoteIds=(remoteContentRes[i].data||[]).map(x=>x.id);
-     const stale=remoteIds.filter(id=>!ids.includes(id));
-     if(stale.length)deletes.push(sb.from('iqnova_content_secure').delete().eq('kind',kind).in('id',stale));
-   });
-   if(deletes.length){const results=await Promise.all(deletes);for(const r of results)if(r.error)throw r.error;}
+     if(ids.length){const {data:remote}=await sb.from('iqnova_content_secure').select('id').eq('kind',kind);const staleContent=(remote||[]).map(x=>x.id).filter(id=>!ids.includes(id));if(staleContent.length){const {error:de}=await sb.from('iqnova_content_secure').delete().eq('kind',kind).in('id',staleContent);if(de)throw de;}}
+     else {const {error:de}=await sb.from('iqnova_content_secure').delete().eq('kind',kind);if(de)throw de;}
+   }
    cloudReady=true;return true;
  }catch(e){console.error('Supabase content save failed',e);toast('ذخیره اطلاعات مدیریتی روی سرور انجام نشد.');return false;}
 }
-
 function queueCloudSave(){
  clearTimeout(cloudSaveTimer);
- if(isManager())cloudSaveTimer=setTimeout(()=>persistContent(),40);
- else if(currentAttempt&&!currentAttempt.completed)cloudSaveTimer=setTimeout(()=>persistAttempt(currentAttempt),40);
+ if(isManager())cloudSaveTimer=setTimeout(()=>persistContent(),350);
+ else if(currentAttempt&&!currentAttempt.completed)cloudSaveTimer=setTimeout(()=>persistAttempt(currentAttempt),350);
 }
 async function initCloud(){
  try{await ensureParticipantAuth();const ok=await loadRemote();applyTheme();applyBranding();renderHome();renderResults();if(ok)toast(isManager()?'اتصال امن مدیر برقرار شد.':'اتصال امن آزمون‌دهنده برقرار شد.');else toast('اتصال به سرور برقرار نشد؛ لطفاً اینترنت و تنظیمات Supabase را بررسی کن.');}
@@ -398,7 +422,7 @@ function renderTests(){
 function testCard(t){
  const img=getCategoryAsset(t.category);
  const cover=img?`<img src="${esc(img)}" alt="${esc(t.category||'آزمون')}" style="width:100%;height:100%;object-fit:contain">`:'🧠';
- return `<div class="card test"><div class="cover">${cover}</div><span class="pill">${esc(t.category||'عمومی')}</span><h3>${esc(t.title)}</h3><p class="muted">${esc(t.description||'آزمون هوش و مهارت')}</p><p class="muted">❓ ${t.questionIds?.length||0} سؤال · ⏱ ${Number(t.duration||0)>0?esc(String(t.duration))+' دقیقه':'بدون محدودیت زمانی'} · ${esc(t.difficulty||'متوسط')}</p><button class="btn primary" data-action="openTest" data-id="${esc(t.id)}">شروع آزمون</button></div>`;
+ return `<div class="card test"><div class="cover">${cover}</div><span class="pill">${esc(t.category||'عمومی')}</span><h3>${esc(t.title)}</h3><p class="muted">${esc(t.description||'آزمون هوش و مهارت')}</p><p class="muted">❓ ${t.questionIds?.length||0} سؤال · ⏱ ${t.duration||0} دقیقه · ${esc(t.difficulty||'متوسط')}</p><button class="btn primary" data-action="openTest" data-id="${esc(t.id)}">شروع آزمون</button></div>`;
 }
 function renderStats(el){
  const pub=db.tests.filter(t=>t.status==='published').length;
@@ -457,7 +481,7 @@ function openTest(id){
  if(completed&&!t.multiple){toast('این آزمون قبلاً روی این دستگاه انجام شده است.');return;}
  openModal(`<h2>${esc(t.title)}</h2><p class="lead">${esc(t.welcome||'خوش آمدید! برای شروع آماده شوید.')}</p>
  <div class="test-link-box"><b>لینک این آزمون:</b><input readonly value="${esc(testLink(t.id))}"><button type="button" class="btn secondary" data-action="copyLink" data-id="${esc(t.id)}">📋 کپی</button></div>
- <div class="stats"><div class="card stat"><strong>${t.questionIds.length}</strong><span>سؤال</span></div><div class="card stat"><strong>${Number(t.duration||0)>0?esc(String(t.duration)):'∞'}</strong><span>${Number(t.duration||0)>0?'دقیقه':'بدون محدودیت'}</span></div><div class="card stat"><strong>${esc(t.difficulty||'متوسط')}</strong><span>سطح</span></div><div class="card stat"><strong>${t.multiple?'∞':'1'}</strong><span>تلاش</span></div></div>
+ <div class="stats"><div class="card stat"><strong>${t.questionIds.length}</strong><span>سؤال</span></div><div class="card stat"><strong>${t.duration||0}</strong><span>دقیقه</span></div><div class="card stat"><strong>${esc(t.difficulty||'متوسط')}</strong><span>سطح</span></div><div class="card stat"><strong>${t.multiple?'∞':'1'}</strong><span>تلاش</span></div></div>
  <div class="card" style="margin-top:15px"><b>قوانین آزمون</b><p class="muted">${esc(t.rules||'پاسخ‌ها را با دقت انتخاب کنید. پاسخ‌ها ذخیره می‌شوند.')}</p></div>
  <form id="participantForm" style="margin-top:18px"><div class="formgrid">
  <div class="field"><label>نام *</label><input name="first" required></div><div class="field"><label>نام خانوادگی *</label><input name="last" required></div>
@@ -491,7 +515,7 @@ function runExam(aid){
 }
 function startTimer(){
  clearInterval(timer);const t=db.tests.find(x=>x.id===currentAttempt.testId);
- if(Number(t.duration||0)<=0){document.getElementById('timer').textContent='بدون محدودیت';return;}
+ if(!t.duration){document.getElementById('timer').textContent='بدون محدودیت';return;}
  const end=currentAttempt.start+t.duration*60000;
  const tick=()=>{const sec=Math.max(0,Math.floor((end-Date.now())/1000));const el=document.getElementById('timer');if(el)el.textContent=String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');if(sec<=0){clearInterval(timer);finishAttempt(true);}};
  tick();timer=setInterval(tick,1000);
@@ -522,19 +546,61 @@ function renderQuestion(){
  const free=document.getElementById('freeAnswer');if(free)free.addEventListener('input',()=>{currentAttempt.answers[q.id]=free.value;saveDB();});
  document.getElementById('prevQ').addEventListener('click',()=>{if(currentAttempt.index>0){currentAttempt.index--;saveDB();renderQuestion();}});
  const next=document.getElementById('nextQ');if(next)next.addEventListener('click',()=>{currentAttempt.index++;saveDB();renderQuestion();});
- const fin=document.getElementById('finishQ');if(fin)fin.addEventListener('click',()=>finishAttempt(false));
+ const fin=document.getElementById('finishQ');if(fin)fin.addEventListener('click',async()=>{if(finalizingAttemptId)return;fin.disabled=true;fin.textContent='در حال ثبت...';await finishAttempt(false);if(document.body.contains(fin)){fin.disabled=false;fin.textContent='ثبت و پایان';}});
  document.querySelectorAll('#qnav .qnum').forEach(b=>b.addEventListener('click',()=>{currentAttempt.index=Number(b.dataset.q);saveDB();renderQuestion();}));
 }
 async function finishAttempt(auto){
- if(!currentAttempt||currentAttempt.completed)return;
- clearInterval(timer);
- if(!authUser?.id){toast('شناسه امن آزمون‌دهنده آماده نیست.');return;}
- currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);
- const {data,error}=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
- if(error){console.error(error);toast('ثبت نهایی آزمون انجام نشد. پاسخ‌ها حفظ شدند؛ دوباره تلاش کن.');return;}
- currentAttempt=fromAttemptRow(data);db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];cacheDB();
- const t=db.tests.find(x=>x.id===currentAttempt.testId);
- if(t?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+  if(!currentAttempt||currentAttempt.completed)return;
+  if(finalizingAttemptId===currentAttempt.id)return;
+  finalizingAttemptId=currentAttempt.id;
+  clearInterval(timer);
+  try{
+    if(!authUser?.id){
+      try{await ensureParticipantAuth();}catch(e){console.error('Participant auth refresh failed:',e);}
+    }
+    if(!authUser?.id){toast('شناسه امن آزمون‌دهنده آماده نیست.');return;}
+    currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);
+
+    const saved=await persistAttempt(currentAttempt);
+    if(!saved){toast('پاسخ‌های آزمون روی سرور ذخیره نشد. اتصال اینترنت را بررسی کن و دوباره تلاش کن.');return;}
+
+    try{await sb.auth.getSession();}catch(e){console.warn('Session check failed:',e);}
+
+    const {data,error}=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
+    if(error||!data){
+      console.error('Finalize attempt failed:',error||'RPC returned no data');
+      try{
+        const {data:recovered,error:recoverError}=await sb
+          .from('iqnova_attempts_secure')
+          .select('*')
+          .eq('id',currentAttempt.id)
+          .eq('user_id',authUser.id)
+          .maybeSingle();
+
+        if(!recoverError && recovered?.status==='completed'){
+          currentAttempt=fromAttemptRow(recovered);
+          db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
+          cacheDB();
+          const recoveredTest=db.tests.find(x=>x.id===currentAttempt.testId);
+          if(recoveredTest?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+          return;
+        }
+      }catch(recoverErr){console.error('Finalize recovery failed:',recoverErr);}
+      toast('ثبت نهایی آزمون انجام نشد. پاسخ‌ها حفظ شدند؛ دوباره تلاش کن.');
+      return;
+    }
+
+    const resultRow=Array.isArray(data)?data[0]:data;
+    if(!resultRow){toast('نتیجه نهایی از سرور دریافت نشد؛ پاسخ‌ها حفظ شدند.');return;}
+
+    currentAttempt=fromAttemptRow(resultRow);
+    db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
+    cacheDB();
+    const t=db.tests.find(x=>x.id===currentAttempt.testId);
+    if(t?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+  }finally{
+    finalizingAttemptId=null;
+  }
 }
 function showPendingResult(aid){
  const a=db.attempts.find(x=>x.id===aid),t=db.tests.find(x=>x.id===a?.testId);
@@ -562,25 +628,10 @@ function showResult(aid){
 }
 
 async function adminLogin(){
- openModal(`<h2>ورود به پنل مدیریت</h2><p class="muted">ورود با Supabase Auth انجام می‌شود.</p><form id="adminForm"><div class="field"><label>ایمیل مدیر</label><input name="email" type="email" required autocomplete="username" value="" placeholder="ایمیل مدیر را وارد کنید"></div><div class="field" style="margin-top:12px"><label>رمز عبور</label><input name="p" type="password" required autocomplete="current-password"></div><button class="btn primary" id="adminLoginBtn" style="margin-top:18px">ورود</button></form>`);
- document.getElementById('adminForm').addEventListener('submit',async e=>{
-   e.preventDefault();
-   const f=new FormData(e.target);
-   const email=String(f.get('email')||'').trim().toLowerCase();
-   const btn=document.getElementById('adminLoginBtn');
-   if(email!==ADMIN_EMAIL.toLowerCase()){toast('این ایمیل مدیر مجاز نیست.');return;}
-   if(btn){btn.disabled=true;btn.textContent='در حال ورود...';}
-   const {data,error}=await sb.auth.signInWithPassword({email,password:String(f.get('p')||'')});
-   if(error){if(btn){btn.disabled=false;btn.textContent='ورود';}toast('ایمیل یا رمز عبور اشتباه است.');return;}
-   authUser=data.user;adminAuthed=isManager();
-   if(!adminAuthed){if(btn){btn.disabled=false;btn.textContent='ورود';}toast('این حساب مدیر نیست.');return;}
-   // Do not wait for the full database sync before opening the panel.
-   closeModal();showView('admin');toast('ورود مدیر انجام شد.');
-   // Refresh cloud data in the background, then repaint once it arrives.
-   loadRemote().then(ok=>{if(ok){renderAdmin('dashboard');applyBranding();renderHome();renderTests();}}).catch(()=>{});
- });
+ if(booting){toast('در حال آماده‌سازی اتصال امن...');return;}
+ openModal(`<h2>ورود به پنل مدیریت</h2><p class="muted">ورود با Supabase Auth انجام می‌شود.</p><form id="adminForm"><div class="field"><label>ایمیل مدیر</label><input name="email" type="email" required autocomplete="username" value="${esc(ADMIN_EMAIL)}"></div><div class="field" style="margin-top:12px"><label>رمز عبور</label><input name="p" type="password" required autocomplete="current-password"></div><button class="btn primary" style="margin-top:18px">ورود</button></form>`);
+ document.getElementById('adminForm').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.target);const email=String(f.get('email')||'').trim().toLowerCase();if(email!==ADMIN_EMAIL.toLowerCase()){toast('این ایمیل مدیر مجاز نیست.');return;}const {data,error}=await sb.auth.signInWithPassword({email,password:String(f.get('p')||'')});if(error){toast('ایمیل یا رمز عبور اشتباه است.');return;}authUser=data.user;adminAuthed=isManager();if(!adminAuthed){toast('این حساب مدیر نیست.');return;}await loadRemote();closeModal();showView('admin');toast('ورود امن مدیر موفق بود.');});
 }
-
 document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='q'){e.preventDefault();adminLogin();}});
 sb.auth.onAuthStateChange(async (_event,session)=>{authUser=session?.user||null;adminAuthed=isManager();if(authUser&&!booting){await loadRemote();applyBranding();renderHome();renderTests();if(!adminAuthed&&document.getElementById('admin').classList.contains('active'))showView('home');}});
 async function adminLogout(){await sb.auth.signOut();authUser=null;adminAuthed=false;try{await ensureParticipantAuth();await loadRemote();}catch(e){}showView('home');toast('از پنل مدیریت خارج شدی.');}
@@ -762,7 +813,7 @@ function editTest(id){
  const t=id?db.tests.find(x=>x.id===id):{title:'',description:'',welcome:'خوش آمدید! آماده‌ای؟',category:db.categories[0],difficulty:'متوسط',duration:10,showResult:true,multiple:false,randomQuestions:false,visibility:'public',status:'draft',rules:'پاسخ‌ها را با دقت انتخاب کنید.',questionIds:[]};
  const cats=db.categories.map(x=>`<option ${x===t.category?'selected':''}>${esc(x)}</option>`).join('');
  const qs=db.questions.map(q=>`<label class="question-pick"><input type="checkbox" name="qs" value="${q.id}" ${(t.questionIds||[]).includes(q.id)?'checked':''}><span><b>${esc(q.text)}</b><small class="muted" style="display:block;margin-top:4px">${typeLabel(q.type)} · ${Number(q.score||1)} امتیاز · ${esc(q.difficulty||'متوسط')}</small></span></label>`).join('');
- openModal(`<h2>${id?'ویرایش آزمون':'ساخت آزمون'}</h2><form id="testForm"><div class="formgrid"><div class="field"><label>عنوان *</label><input name="title" value="${esc(t.title)}" required></div><div class="field"><label>دسته</label><select name="category">${cats}</select></div><div class="field"><label>سطح</label><select name="difficulty"><option ${t.difficulty==='آسان'?'selected':''}>آسان</option><option ${t.difficulty==='متوسط'?'selected':''}>متوسط</option><option ${t.difficulty==='سخت'?'selected':''}>سخت</option></select></div><div class="field"><label>مدت زمان آزمون (دقیقه)</label><input name="duration" type="number" min="0" step="1" value="${Number(t.duration||0)}"><small class="muted" style="display:block;margin-top:6px">۰ = بدون محدودیت زمانی (بینهایت)</small></div><div class="field full"><label>توضیحات</label><textarea name="description">${esc(t.description)}</textarea></div><div class="field full"><label>پیام خوش‌آمدگویی</label><textarea name="welcome">${esc(t.welcome)}</textarea></div><div class="field full"><label>قوانین</label><textarea name="rules">${esc(t.rules)}</textarea></div><div class="field"><label>وضعیت</label><select name="status"><option value="draft" ${t.status==='draft'?'selected':''}>پیش‌نویس</option><option value="published" ${t.status==='published'?'selected':''}>منتشرشده</option><option value="unpublished" ${t.status==='unpublished'?'selected':''}>لغو انتشار</option></select></div><div class="field"><label>دسترسی</label><select name="visibility"><option value="public" ${t.visibility==='public'?'selected':''}>عمومی</option><option value="private" ${t.visibility==='private'?'selected':''}>خصوصی با لینک</option></select></div><div class="field"><label>گزینه‌ها</label><label><input type="checkbox" name="showResult" ${t.showResult!==false?'checked':''}> نمایش نتیجه</label><label><input type="checkbox" name="multiple" ${t.multiple?'checked':''}> چندبار شرکت</label><label><input type="checkbox" name="randomQuestions" ${t.randomQuestions?'checked':''}> تصادفی‌سازی سؤال‌ها</label></div><div class="field full">
+ openModal(`<h2>${id?'ویرایش آزمون':'ساخت آزمون'}</h2><form id="testForm"><div class="formgrid"><div class="field"><label>عنوان *</label><input name="title" value="${esc(t.title)}" required></div><div class="field"><label>دسته</label><select name="category">${cats}</select></div><div class="field"><label>سطح</label><select name="difficulty"><option ${t.difficulty==='آسان'?'selected':''}>آسان</option><option ${t.difficulty==='متوسط'?'selected':''}>متوسط</option><option ${t.difficulty==='سخت'?'selected':''}>سخت</option></select></div><div class="field"><label>زمان (دقیقه)</label><input name="duration" type="number" min="0" value="${t.duration}"></div><div class="field full"><label>توضیحات</label><textarea name="description">${esc(t.description)}</textarea></div><div class="field full"><label>پیام خوش‌آمدگویی</label><textarea name="welcome">${esc(t.welcome)}</textarea></div><div class="field full"><label>قوانین</label><textarea name="rules">${esc(t.rules)}</textarea></div><div class="field"><label>وضعیت</label><select name="status"><option value="draft" ${t.status==='draft'?'selected':''}>پیش‌نویس</option><option value="published" ${t.status==='published'?'selected':''}>منتشرشده</option><option value="unpublished" ${t.status==='unpublished'?'selected':''}>لغو انتشار</option></select></div><div class="field"><label>دسترسی</label><select name="visibility"><option value="public" ${t.visibility==='public'?'selected':''}>عمومی</option><option value="private" ${t.visibility==='private'?'selected':''}>خصوصی با لینک</option></select></div><div class="field"><label>گزینه‌ها</label><label><input type="checkbox" name="showResult" ${t.showResult!==false?'checked':''}> نمایش نتیجه</label><label><input type="checkbox" name="multiple" ${t.multiple?'checked':''}> چندبار شرکت</label><label><input type="checkbox" name="randomQuestions" ${t.randomQuestions?'checked':''}> تصادفی‌سازی سؤال‌ها</label></div><div class="field full">
 <label>انتخاب سؤال‌ها</label>
 <div class="question-select-head">
   <div class="muted">از بانک سؤال انتخاب کن یا همین‌جا سؤال جدید بساز.</div>
