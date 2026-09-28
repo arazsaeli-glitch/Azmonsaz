@@ -244,7 +244,7 @@ footer{padding:35px 0;border-top:1px solid var(--line);color:var(--muted)}
 <script>
 'use strict';
 
-const KEY='iqnova_secure_v3';
+const KEY='iqnova_secure_v4';
 const SUPABASE_URL='https://wardcoesaoecgixzvelq.supabase.co';
 const SUPABASE_KEY='sb_publishable_vKj0adiNq5ZqqAvI2kl_Fg_nmkqWaGq';
 // This must match the email inserted into public.iqnova_admins in Supabase.
@@ -254,7 +254,7 @@ const DEFAULTS={
  categories:['هوش و IQ','منطق','ریاضی و عددی','الگوهای تصویری','تمرکز','حل مسئله','اطلاعات عمومی','سرگرمی'],
  tests:[],questions:[],attempts:[],settings:{theme:'light',brandAssets:{logo:'',categories:{}}},admin:{username:'admin',password:null}
 };
-let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null, authUser=null, booting=true;
+let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null, authUser=null, booting=true, finalizingAttemptId=null;
 
 function clone(x){return JSON.parse(JSON.stringify(x));}
 function loadDB(){try{const saved=JSON.parse(localStorage.getItem(KEY)||'null');return {...clone(DEFAULTS),...(saved||{}),settings:{...DEFAULTS.settings,...(saved?.settings||{})}};}catch(e){return clone(DEFAULTS);}}
@@ -546,27 +546,61 @@ function renderQuestion(){
  const free=document.getElementById('freeAnswer');if(free)free.addEventListener('input',()=>{currentAttempt.answers[q.id]=free.value;saveDB();});
  document.getElementById('prevQ').addEventListener('click',()=>{if(currentAttempt.index>0){currentAttempt.index--;saveDB();renderQuestion();}});
  const next=document.getElementById('nextQ');if(next)next.addEventListener('click',()=>{currentAttempt.index++;saveDB();renderQuestion();});
- const fin=document.getElementById('finishQ');if(fin)fin.addEventListener('click',()=>finishAttempt(false));
+ const fin=document.getElementById('finishQ');if(fin)fin.addEventListener('click',async()=>{if(finalizingAttemptId)return;fin.disabled=true;fin.textContent='در حال ثبت...';await finishAttempt(false);if(document.body.contains(fin)){fin.disabled=false;fin.textContent='ثبت و پایان';}});
  document.querySelectorAll('#qnav .qnum').forEach(b=>b.addEventListener('click',()=>{currentAttempt.index=Number(b.dataset.q);saveDB();renderQuestion();}));
 }
 async function finishAttempt(auto){
- if(!currentAttempt||currentAttempt.completed)return;
- clearInterval(timer);
- if(!authUser?.id){toast('شناسه امن آزمون‌دهنده آماده نیست.');return;}
- currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);
+  if(!currentAttempt||currentAttempt.completed)return;
+  if(finalizingAttemptId===currentAttempt.id)return;
+  finalizingAttemptId=currentAttempt.id;
+  clearInterval(timer);
+  try{
+    if(!authUser?.id){
+      try{await ensureParticipantAuth();}catch(e){console.error('Participant auth refresh failed:',e);}
+    }
+    if(!authUser?.id){toast('شناسه امن آزمون‌دهنده آماده نیست.');return;}
+    currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);
 
- // آخرین پاسخ‌ها را قبل از نهایی‌سازی روی Supabase ذخیره می‌کنیم تا کلیک سریع روی «ثبت و پایان» باعث از دست رفتن پاسخ آخر نشود.
- const saved=await persistAttempt(currentAttempt);
- if(!saved){toast('پاسخ‌های آزمون روی سرور ذخیره نشد. اتصال اینترنت را بررسی کن و دوباره تلاش کن.');return;}
+    const saved=await persistAttempt(currentAttempt);
+    if(!saved){toast('پاسخ‌های آزمون روی سرور ذخیره نشد. اتصال اینترنت را بررسی کن و دوباره تلاش کن.');return;}
 
- const {data,error}=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
- if(error){console.error('Finalize attempt failed:',error);toast('ثبت نهایی آزمون انجام نشد. پاسخ‌ها حفظ شدند؛ دوباره تلاش کن.');return;}
- if(!data){console.error('Finalize attempt returned no data.');toast('ثبت نهایی آزمون انجام نشد. پاسخ‌ها حفظ شدند؛ دوباره تلاش کن.');return;}
- currentAttempt=fromAttemptRow(data);
- db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
- cacheDB();
- const t=db.tests.find(x=>x.id===currentAttempt.testId);
- if(t?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+    try{await sb.auth.getSession();}catch(e){console.warn('Session check failed:',e);}
+
+    const {data,error}=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
+    if(error||!data){
+      console.error('Finalize attempt failed:',error||'RPC returned no data');
+      try{
+        const {data:recovered,error:recoverError}=await sb
+          .from('iqnova_attempts_secure')
+          .select('*')
+          .eq('id',currentAttempt.id)
+          .eq('user_id',authUser.id)
+          .maybeSingle();
+
+        if(!recoverError && recovered?.status==='completed'){
+          currentAttempt=fromAttemptRow(recovered);
+          db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
+          cacheDB();
+          const recoveredTest=db.tests.find(x=>x.id===currentAttempt.testId);
+          if(recoveredTest?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+          return;
+        }
+      }catch(recoverErr){console.error('Finalize recovery failed:',recoverErr);}
+      toast('ثبت نهایی آزمون انجام نشد. پاسخ‌ها حفظ شدند؛ دوباره تلاش کن.');
+      return;
+    }
+
+    const resultRow=Array.isArray(data)?data[0]:data;
+    if(!resultRow){toast('نتیجه نهایی از سرور دریافت نشد؛ پاسخ‌ها حفظ شدند.');return;}
+
+    currentAttempt=fromAttemptRow(resultRow);
+    db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
+    cacheDB();
+    const t=db.tests.find(x=>x.id===currentAttempt.testId);
+    if(t?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+  }finally{
+    finalizingAttemptId=null;
+  }
 }
 function showPendingResult(aid){
  const a=db.attempts.find(x=>x.id===aid),t=db.tests.find(x=>x.id===a?.testId);
