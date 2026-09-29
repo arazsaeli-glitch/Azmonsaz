@@ -244,7 +244,7 @@ footer{padding:35px 0;border-top:1px solid var(--line);color:var(--muted)}
 <script>
 'use strict';
 
-const KEY='iqnova_secure_v3';
+const KEY='iqnova_secure_v4';
 const SUPABASE_URL='https://wardcoesaoecgixzvelq.supabase.co';
 const SUPABASE_KEY='sb_publishable_vKj0adiNq5ZqqAvI2kl_Fg_nmkqWaGq';
 // This must match the email inserted into public.iqnova_admins in Supabase.
@@ -254,7 +254,7 @@ const DEFAULTS={
  categories:['هوش و IQ','منطق','ریاضی و عددی','الگوهای تصویری','تمرکز','حل مسئله','اطلاعات عمومی','سرگرمی'],
  tests:[],questions:[],attempts:[],settings:{theme:'light',brandAssets:{logo:'',categories:{}}},admin:{username:'admin',password:null}
 };
-let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null, authUser=null, booting=true;
+let db=loadDB(), currentAttempt=null, timer=null, adminAuthed=false, cloudReady=false, cloudSaveTimer=null, authUser=null, booting=true, finalizingAttemptId=null;
 
 function clone(x){return JSON.parse(JSON.stringify(x));}
 function loadDB(){try{const saved=JSON.parse(localStorage.getItem(KEY)||'null');return {...clone(DEFAULTS),...(saved||{}),settings:{...DEFAULTS.settings,...(saved?.settings||{})}};}catch(e){return clone(DEFAULTS);}}
@@ -263,8 +263,6 @@ function saveDB(){cacheDB();queueCloudSave();return true;}
 function isManager(user=authUser){return !!user&&!user.is_anonymous&&String(user.email||'').toLowerCase()===ADMIN_EMAIL.toLowerCase();}
 function currentUserId(){return authUser?.id||null;}
 function deviceId(){return currentUserId()||'anonymous';}
-function attemptExpired(a,t){return !!(a&&t&&Number(t.duration)>0&&Date.now() >= (Number(a.start)+Number(t.duration)*60000));}
-let finishingAttempt=false;
 function safeQuestion(q){const x=clone(q||{});delete x.correct;delete x.answers;delete x.id;return x;}
 function safeImageUrl(v){const s=String(v??'').trim();if(!s)return '';if(/^https?:\/\//i.test(s))return s;if(/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(s))return s;return '';}
 function sanitizeLoadedData(){db.questions.forEach(q=>{q.image=safeImageUrl(q.image);});db.tests.forEach(t=>{t.title=String(t.title||'').trim();t.description=String(t.description||'');t.welcome=String(t.welcome||'');t.rules=String(t.rules||'');});db.settings={...clone(DEFAULTS.settings),...(db.settings||{}),brandAssets:{...clone(DEFAULTS.settings.brandAssets),...(db.settings?.brandAssets||{}),categories:{...(db.settings?.brandAssets?.categories||{})}}};if(typeof db.settings.brandAssets.logo!=='string')db.settings.brandAssets.logo='';Object.keys(db.settings.brandAssets.categories||{}).forEach(k=>{db.settings.brandAssets.categories[k]=safeImageUrl(db.settings.brandAssets.categories[k]);});}
@@ -315,15 +313,42 @@ async function loadRemote(){
 function fromAttemptRow(r){return {id:r.id,testId:r.test_id,deviceId:r.user_id,first:r.first_name,last:r.last_name,age:r.age,grade:r.grade,notes:r.notes,answers:r.answers||{},index:0,start:new Date(r.started_at).getTime(),completed:r.status==='completed',order:r.question_order||[],completedAt:r.completed_at?new Date(r.completed_at).getTime():null,duration:r.duration_seconds,score:Number(r.score||0),total:Number(r.total||0),autoTotal:Number(r.auto_total||0),percent:Number(r.percent||0),correct:r.correct||0,wrong:r.wrong||0,unanswered:r.unanswered||0,manual:r.manual||0};}
 function toAttemptRow(a){return {id:a.id,user_id:currentUserId(),test_id:a.testId,first_name:String(a.first||'').trim(),last_name:String(a.last||'').trim(),age:a.age?Number(a.age):null,grade:a.grade||null,notes:a.notes||null,answers:a.answers||{},question_order:a.order||[],started_at:new Date(a.start||Date.now()).toISOString(),completed_at:a.completed&&a.completedAt?new Date(a.completedAt).toISOString():null,duration_seconds:a.duration||null,status:a.completed?'completed':'in_progress',score:a.completed?Number(a.score||0):0,total:a.completed?Number(a.total||0):0,auto_total:a.completed?Number(a.autoTotal||0):0,percent:a.completed?Number(a.percent||0):0,correct:a.completed?Number(a.correct||0):0,wrong:a.completed?Number(a.wrong||0):0,unanswered:a.completed?Number(a.unanswered||0):0,manual:a.completed?Number(a.manual||0):0};}
 async function persistAttempt(a){
- if(!currentUserId()||!a)return false;
+ if(!a)return false;
+ if(!authUser?.id){
+   try{await ensureParticipantAuth();}catch(e){console.error('Participant auth unavailable:',e);}
+ }
+ if(!currentUserId())return false;
  const row=toAttemptRow(a);
  if(a.completed){
    // Finalized attempts are written by the server-side RPC only.
    return true;
  }
- const {error}=await sb.from('iqnova_attempts_secure').upsert(row,{onConflict:'id'});
- if(error){console.error(error);toast('ذخیره آزمون روی سرور انجام نشد.');return false;}
- cloudReady=true;return true;
+ try{
+   const {data:existing,error:findError}=await sb
+     .from('iqnova_attempts_secure')
+     .select('id,user_id,status')
+     .eq('id',a.id)
+     .maybeSingle();
+   if(findError)throw findError;
+
+   if(!existing){
+     const {error}=await sb.from('iqnova_attempts_secure').insert(row);
+     if(error)throw error;
+   }else if(existing.user_id===currentUserId() && existing.status==='in_progress'){
+     const {error}=await sb.from('iqnova_attempts_secure').update(row).eq('id',a.id).eq('user_id',currentUserId());
+     if(error)throw error;
+   }else{
+     console.error('Attempt ownership conflict:',existing);
+     toast('این آزمون به نشست دیگری تعلق دارد. لطفاً آزمون را دوباره شروع کن.');
+     return false;
+   }
+   cloudReady=true;
+   return true;
+ }catch(error){
+   console.error('Attempt save failed:',error);
+   toast('ذخیره آزمون روی سرور انجام نشد. اتصال اینترنت و نشست آزمون را بررسی کن.');
+   return false;
+ }
 }
 async function persistContent(){
  if(!isManager())return false;
@@ -477,25 +502,16 @@ function handleAction(action,id){
 async function openTest(id){
  const t=db.tests.find(x=>x.id===id);if(!t)return;
  if(t.status!=='published'){toast('این آزمون هنوز منتشر نشده است.');return;}
- if(!authUser?.id){try{await ensureParticipantAuth();}catch(e){toast('احراز هویت آزمون‌دهنده آماده نیست.');return;}}
  const did=deviceId();
- // همیشه وضعیت آخر Attempt را از سرور می‌گیریم تا cache قدیمی باعث شروع دوباره نشود.
- try{
-   const {data:remoteAttempts,error}=await sb.from('iqnova_attempts_secure').select('*').eq('test_id',id).eq('user_id',did).order('started_at',{ascending:false});
-   if(error)throw error;
-   const remote=(remoteAttempts||[]).map(fromAttemptRow);
-   db.attempts=[...remote,...db.attempts.filter(a=>!(a.testId===id&&a.deviceId===did))];
-   cacheDB();
- }catch(e){console.error('Attempt status check failed:',e);toast('وضعیت آزمون از سرور دریافت نشد. اتصال اینترنت را بررسی کن.');return;}
- const unfinished=db.attempts.find(a=>a.testId===id&&a.deviceId===did&&!a.completed);
+ let unfinished=db.attempts.find(a=>a.testId===id&&a.deviceId===did&&!a.completed);
  const completed=db.attempts.find(a=>a.testId===id&&a.deviceId===did&&a.completed);
- if(completed&&!t.multiple){toast('این آزمون قبلاً انجام شده است.');return;}
- if(unfinished&&attemptExpired(unfinished,t)){
-   // Attempt منقضی شده را هرگز دوباره ادامه نده؛ ابتدا نهایی‌سازی سروری را انجام بده.
+ const durationMinutes=Math.max(0,Number(t.duration)||0);
+ if(unfinished && durationMinutes>0 && Date.now()>=unfinished.start+durationMinutes*60000){
    currentAttempt=unfinished;
    await finishAttempt(true);
    return;
  }
+ if(completed&&!t.multiple){toast('این آزمون قبلاً روی این دستگاه انجام شده است.');return;}
  openModal(`<h2>${esc(t.title)}</h2><p class="lead">${esc(t.welcome||'خوش آمدید! برای شروع آماده شوید.')}</p>
  <div class="test-link-box"><b>لینک این آزمون:</b><input readonly value="${esc(testLink(t.id))}"><button type="button" class="btn secondary" data-action="copyLink" data-id="${esc(t.id)}">📋 کپی</button></div>
  <div class="stats"><div class="card stat"><strong>${t.questionIds.length}</strong><span>سؤال</span></div><div class="card stat"><strong>${t.duration||0}</strong><span>دقیقه</span></div><div class="card stat"><strong>${esc(t.difficulty||'متوسط')}</strong><span>سطح</span></div><div class="card stat"><strong>${t.multiple?'∞':'1'}</strong><span>تلاش</span></div></div>
@@ -511,13 +527,16 @@ async function openTest(id){
 let lastAttemptSubmitAt=0;
 async function startAttempt(e,testId){
  e.preventDefault();
- if(Date.now()-lastAttemptSubmitAt<3000){toast('لطفاً چند ثانیه صبر کن و دوباره تلاش کن.');return;}
+ if(Date.now()-lastAttemptSubmitAt<1500){toast('لطفاً کمی صبر کن و دوباره تلاش کن.');return;}
  lastAttemptSubmitAt=Date.now();
  if(!authUser?.id){toast('احراز هویت آزمون‌دهنده آماده نیست.');return;}
  const t=db.tests.find(x=>x.id===testId),f=new FormData(e.target),did=deviceId();
+ if(!t){toast('آزمون پیدا نشد.');return;}
+ const durationMinutes=Math.max(0,Number(t.duration)||0);
  const now=Date.now();
  let a=db.attempts.find(x=>x.testId===testId&&x.deviceId===did&&!x.completed);
- if(a&&attemptExpired(a,t)){
+ // اگر تلاش قبلی از زمان مجاز عبور کرده باشد، اجازه ادامه نمی‌دهیم.
+ if(a && durationMinutes>0 && now >= a.start + durationMinutes*60000){
    currentAttempt=a;
    await finishAttempt(true);
    return;
@@ -531,7 +550,7 @@ async function startAttempt(e,testId){
  }else{
    a.first=String(f.get('first')||'').trim();a.last=String(f.get('last')||'').trim();a.age=f.get('age');a.grade=String(f.get('grade')||'').trim();a.notes=String(f.get('notes')||'').trim();
    const saved=await persistAttempt(a);
-   if(!saved)return;
+   if(!saved){toast('آزمون هنوز روی سرور ثبت نشده است؛ دوباره تلاش کن.');return;}
  }
  cacheDB();closeModal();runExam(a.id);
 }
@@ -542,11 +561,19 @@ function runExam(aid){
  renderQuestion();startTimer();
 }
 function startTimer(){
- clearInterval(timer);const t=db.tests.find(x=>x.id===currentAttempt.testId);
- if(!Number(t.duration)){document.getElementById('timer').textContent='بدون محدودیت';return;}
- const end=currentAttempt.start+Number(t.duration)*60000;
- const tick=()=>{const sec=Math.max(0,Math.floor((end-Date.now())/1000));const el=document.getElementById('timer');if(el)el.textContent=String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');if(sec<=0){clearInterval(timer);finishAttempt(true);}};
- tick();timer=setInterval(tick,1000);
+ clearInterval(timer);
+ const t=db.tests.find(x=>x.id===currentAttempt.testId);
+ const durationMinutes=Math.max(0,Number(t?.duration)||0);
+ const el=document.getElementById('timer');
+ if(!durationMinutes){if(el)el.textContent='بدون محدودیت';return;}
+ const end=currentAttempt.start+durationMinutes*60000;
+ const tick=()=>{
+   const sec=Math.max(0,Math.ceil((end-Date.now())/1000));
+   if(el)el.textContent=String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
+   if(sec<=0){clearInterval(timer);finishAttempt(true);}
+ };
+ tick();
+ timer=setInterval(tick,1000);
 }
 function renderQuestion(){
  const t=db.tests.find(x=>x.id===currentAttempt.testId),q=db.questions.find(x=>x.id===currentAttempt.order[currentAttempt.index]);
@@ -574,40 +601,81 @@ function renderQuestion(){
  const free=document.getElementById('freeAnswer');if(free)free.addEventListener('input',()=>{currentAttempt.answers[q.id]=free.value;saveDB();});
  document.getElementById('prevQ').addEventListener('click',()=>{if(currentAttempt.index>0){currentAttempt.index--;saveDB();renderQuestion();}});
  const next=document.getElementById('nextQ');if(next)next.addEventListener('click',()=>{currentAttempt.index++;saveDB();renderQuestion();});
- const fin=document.getElementById('finishQ');if(fin)fin.addEventListener('click',()=>finishAttempt(false));
+ const fin=document.getElementById('finishQ');if(fin)fin.addEventListener('click',async()=>{if(finalizingAttemptId)return;fin.disabled=true;fin.textContent='در حال ثبت...';await finishAttempt(false);if(document.body.contains(fin)){fin.disabled=false;fin.textContent='ثبت و پایان';}});
  document.querySelectorAll('#qnav .qnum').forEach(b=>b.addEventListener('click',()=>{currentAttempt.index=Number(b.dataset.q);saveDB();renderQuestion();}));
 }
 async function finishAttempt(auto){
- if(!currentAttempt||currentAttempt.completed||finishingAttempt)return;
- finishingAttempt=true;
- clearInterval(timer);
- if(!authUser?.id){finishingAttempt=false;toast('شناسه امن آزمون‌دهنده آماده نیست.');return;}
- const t=db.tests.find(x=>x.id===currentAttempt.testId);
- const elapsed=Math.max(0,Math.round((Date.now()-currentAttempt.start)/1000));
- currentAttempt.duration=elapsed;
- if(t&&Number(t.duration)>0&&elapsed>=Number(t.duration)*60)auto=true;
- // آخرین پاسخ‌ها را قبل از نهایی‌سازی ذخیره می‌کنیم.
- const saved=await persistAttempt(currentAttempt);
- if(!saved){finishingAttempt=false;toast('پاسخ‌های آزمون روی سرور ذخیره نشد. اتصال اینترنت را بررسی کن و دوباره تلاش کن.');return;}
- const {data,error}=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
- if(error){
-   console.error('Finalize attempt failed:',error);
-   finishingAttempt=false;
-   toast('ثبت نهایی آزمون انجام نشد. آزمون منقضی/حفظ شده است؛ دوباره تلاش کن.');
-   return;
- }
- if(!data){
-   console.error('Finalize attempt returned no data.');
-   finishingAttempt=false;
-   toast('ثبت نهایی آزمون انجام نشد. دوباره تلاش کن.');
-   return;
- }
- currentAttempt=fromAttemptRow(data);
- db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
- cacheDB();
- finishingAttempt=false;
- const resultTest=db.tests.find(x=>x.id===currentAttempt.testId);
- if(resultTest?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+  if(!currentAttempt||currentAttempt.completed)return;
+  if(finalizingAttemptId===currentAttempt.id)return;
+  finalizingAttemptId=currentAttempt.id;
+  clearInterval(timer);
+  try{
+    // نشست واقعی Supabase را درست قبل از ثبت نهایی دوباره می‌خوانیم.
+    let sessionData=null;
+    try{
+      const sessionResult=await sb.auth.getSession();
+      sessionData=sessionResult.data?.session||null;
+    }catch(e){console.error('Session check failed:',e);}
+    if(sessionData?.user){
+      authUser=sessionData.user;
+      adminAuthed=isManager();
+    }else if(!authUser?.id){
+      try{await ensureParticipantAuth();}catch(e){console.error('Participant auth refresh failed:',e);}
+    }
+    if(!authUser?.id){toast('شناسه امن آزمون‌دهنده آماده نیست. لطفاً صفحه را یک‌بار تازه‌سازی کن.');return;}
+
+    currentAttempt.duration=Math.round((Date.now()-currentAttempt.start)/1000);
+
+    // ابتدا مطمئن می‌شویم همین attempt متعلق به همین نشست است و واقعاً روی سرور وجود دارد.
+    const saved=await persistAttempt(currentAttempt);
+    if(!saved)return;
+
+    // RPC سمت سرور امتیازدهی و نهایی‌سازی را انجام می‌دهد.
+    let result=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
+    if(result.error){
+      console.error('Finalize attempt failed:',result.error);
+      // یک بار نشست را تازه می‌کنیم و دوباره تلاش می‌کنیم؛ این حالت خطای انقضای session را هم پوشش می‌دهد.
+      const refreshed=await sb.auth.getSession();
+      if(refreshed.data?.session?.user){
+        authUser=refreshed.data.session.user;
+        result=await sb.rpc('iqnova_finalize_attempt',{p_attempt_id:currentAttempt.id});
+      }
+    }
+
+    if(result.error||!result.data){
+      console.error('Finalize attempt failed:',result.error||'RPC returned no data');
+      // اگر RPC قبلاً موفق شده ولی پاسخ در مسیر گم شده باشد، نتیجه تکمیل‌شده را بازیابی می‌کنیم.
+      try{
+        const {data:recovered,error:recoverError}=await sb
+          .from('iqnova_attempts_secure')
+          .select('*')
+          .eq('id',currentAttempt.id)
+          .eq('user_id',authUser.id)
+          .maybeSingle();
+        if(!recoverError && recovered?.status==='completed'){
+          currentAttempt=fromAttemptRow(recovered);
+          db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
+          cacheDB();
+          const recoveredTest=db.tests.find(x=>x.id===currentAttempt.testId);
+          if(recoveredTest?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+          return;
+        }
+      }catch(recoverErr){console.error('Finalize recovery failed:',recoverErr);}
+      toast('ثبت نهایی آزمون انجام نشد. پاسخ‌ها حفظ شدند؛ دوباره تلاش کن.');
+      return;
+    }
+
+    const resultRow=Array.isArray(result.data)?result.data[0]:result.data;
+    if(!resultRow){toast('نتیجه نهایی از سرور دریافت نشد؛ پاسخ‌ها حفظ شدند.');return;}
+
+    currentAttempt=fromAttemptRow(resultRow);
+    db.attempts=[currentAttempt,...db.attempts.filter(x=>x.id!==currentAttempt.id)];
+    cacheDB();
+    const t=db.tests.find(x=>x.id===currentAttempt.testId);
+    if(t?.showResult!==false)showResult(currentAttempt.id);else showPendingResult(currentAttempt.id);
+  }finally{
+    finalizingAttemptId=null;
+  }
 }
 function showPendingResult(aid){
  const a=db.attempts.find(x=>x.id===aid),t=db.tests.find(x=>x.id===a?.testId);
@@ -855,10 +923,39 @@ function editTest(id){
    closeModal();
    editQuestion(null,currentId);
 });
-document.getElementById('testForm').addEventListener('submit',e=>{e.preventDefault();const f=new FormData(e.target),ids=f.getAll('qs');if(!ids.length){toast('حداقل یک سؤال انتخاب کن.');return;}let obj=id?db.tests.find(x=>x.id===id):{id:uid('test')};Object.assign(obj,{title:f.get('title'),description:f.get('description'),welcome:f.get('welcome'),rules:f.get('rules'),category:f.get('category'),difficulty:f.get('difficulty'),duration:Number(f.get('duration')||0),showResult:f.get('showResult')==='on',multiple:f.get('multiple')==='on',randomQuestions:f.get('randomQuestions')==='on',visibility:f.get('visibility'),status:f.get('status'),questionIds:ids});if(!id)db.tests.push(obj);saveDB();closeModal();renderAdmin('tests');toast('آزمون ذخیره شد.');});
+document.getElementById('testForm').addEventListener('submit',async e=>{
+ e.preventDefault();
+ const f=new FormData(e.target),ids=f.getAll('qs');
+ if(!ids.length){toast('حداقل یک سؤال انتخاب کن.');return;}
+ const btn=e.submitter||e.target.querySelector('button[type="submit"]');
+ if(btn){btn.disabled=true;btn.textContent='در حال ذخیره...';}
+ let obj=id?db.tests.find(x=>x.id===id):{id:uid('test')};
+ const oldObj=id?clone(obj):null;
+ Object.assign(obj,{title:String(f.get('title')||'').trim(),description:String(f.get('description')||''),welcome:String(f.get('welcome')||''),rules:String(f.get('rules')||''),category:String(f.get('category')||''),difficulty:String(f.get('difficulty')||'متوسط'),duration:Math.max(0,Number(f.get('duration')||0)),showResult:f.get('showResult')==='on',multiple:f.get('multiple')==='on',randomQuestions:f.get('randomQuestions')==='on',visibility:f.get('visibility')||'public',status:f.get('status')||'draft',questionIds:ids});
+ if(!id)db.tests.push(obj);
+ cacheDB();
+ const ok=await persistContent();
+ if(!ok){
+   if(!id)db.tests=db.tests.filter(x=>x.id!==obj.id);else Object.assign(obj,oldObj);
+   cacheDB();
+   if(btn){btn.disabled=false;btn.textContent='ذخیره آزمون';}
+   return;
+ }
+ closeModal();renderAdmin('tests');renderHome();toast('آزمون با موفقیت روی سرور ذخیره شد.');
+});
 }
-function togglePublish(id){const t=db.tests.find(x=>x.id===id);if(!t)return;t.status=t.status==='published'?'unpublished':'published';saveDB();renderAdmin('tests');}
-function duplicateTest(id){const t=db.tests.find(x=>x.id===id);if(!t)return;const n=clone(t);n.id=uid('test');n.title+=' (کپی)';n.status='draft';db.tests.push(n);saveDB();renderAdmin('tests');toast('آزمون تکثیر شد.');}
+async function togglePublish(id){
+ const t=db.tests.find(x=>x.id===id);if(!t)return;
+ const old=t.status;t.status=t.status==='published'?'unpublished':'published';cacheDB();
+ if(!(await persistContent())){t.status=old;cacheDB();return;}
+ renderAdmin('tests');renderHome();toast(t.status==='published'?'آزمون منتشر شد.':'انتشار آزمون لغو شد.');
+}
+async function duplicateTest(id){
+ const t=db.tests.find(x=>x.id===id);if(!t)return;
+ const n=clone(t);n.id=uid('test');n.title+=' (کپی)';n.status='draft';db.tests.push(n);cacheDB();
+ if(!(await persistContent())){db.tests=db.tests.filter(x=>x.id!==n.id);cacheDB();return;}
+ renderAdmin('tests');toast('آزمون تکثیر شد.');
+}
 function editQuestion(id, returnToTestId=null){
  const original=id?db.questions.find(x=>x.id===id):null;
  const q=clone(original||{id:uid('q'),text:'',type:'mcq',options:['گزینه ۱','گزینه ۲','گزینه ۳','گزینه ۴'],correct:[0],score:1,difficulty:'متوسط',image:'',answers:[]});
@@ -1020,7 +1117,17 @@ async function addCategory(){if(!isManager())return;const name=prompt('نام د
 async function editCategory(index){if(!isManager())return;const old=db.categories[index];const name=prompt('نام جدید دسته:',old);if(!name||!name.trim()||name.trim()===old)return;db.categories[index]=name.trim();db.tests.forEach(t=>{if(t.category===old)t.category=name.trim();});await persistContent();renderAdmin('categories');renderHome();}
 async function deleteCategory(index){if(!isManager())return;const name=db.categories[index];if(db.tests.some(t=>t.category===name)){toast('ابتدا آزمون‌های این دسته را به دسته دیگری منتقل کن.');return;}if(!confirm(`دسته «${name}» حذف شود؟`))return;db.categories.splice(index,1);await persistContent();renderAdmin('categories');renderHome();}
 
-window.addEventListener('beforeunload',e=>{if(currentAttempt&&!currentAttempt.completed){persistAttempt(currentAttempt);e.preventDefault();e.returnValue='آزمون شما ذخیره شده است.';}});
+
+document.addEventListener('visibilitychange',()=>{
+ if(document.visibilityState==='visible' && currentAttempt && !currentAttempt.completed){
+   const t=db.tests.find(x=>x.id===currentAttempt.testId);
+   const minutes=Math.max(0,Number(t?.duration)||0);
+   if(minutes && Date.now()>=currentAttempt.start+minutes*60000){clearInterval(timer);finishAttempt(true);}
+   else if(minutes) startTimer();
+ }
+});
+
+window.addEventListener('beforeunload',()=>{if(currentAttempt&&!currentAttempt.completed){cacheDB();}});
 initCloud().then(()=>{
  const linkedTest=new URLSearchParams(window.location.search).get('test');
  if(linkedTest && db.tests.some(x=>x.id===linkedTest)) openTest(linkedTest);
