@@ -98,6 +98,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0
 .empty-question{padding:18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:13px}
 .question-pick{display:flex!important;align-items:flex-start;gap:10px;padding:12px;border-radius:13px;margin:7px 0!important;background:var(--bg);border:1px solid transparent}
 .question-pick:hover{border-color:#cfd7ff;background:#f7f8ff}
+.question-pick-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-right:auto}.btn-sm{padding:7px 10px!important;font-size:12px!important;white-space:nowrap}
 .answer-panel{margin-top:18px;padding:18px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(180deg,rgba(91,108,255,.035),rgba(25,201,232,.025))}
 .answer-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:13px}
 .option-editor{display:grid;grid-template-columns:28px 1fr 40px;gap:8px;align-items:center;margin:9px 0}
@@ -499,18 +500,12 @@ function handleAction(action,id){
  if(action==='adminLogin')adminLogin();
 }
 
-async function openTest(id){
+function openTest(id){
  const t=db.tests.find(x=>x.id===id);if(!t)return;
  if(t.status!=='published'){toast('این آزمون هنوز منتشر نشده است.');return;}
  const did=deviceId();
- let unfinished=db.attempts.find(a=>a.testId===id&&a.deviceId===did&&!a.completed);
+ const unfinished=db.attempts.find(a=>a.testId===id&&a.deviceId===did&&!a.completed);
  const completed=db.attempts.find(a=>a.testId===id&&a.deviceId===did&&a.completed);
- const durationMinutes=Math.max(0,Number(t.duration)||0);
- if(unfinished && durationMinutes>0 && Date.now()>=unfinished.start+durationMinutes*60000){
-   currentAttempt=unfinished;
-   await finishAttempt(true);
-   return;
- }
  if(completed&&!t.multiple){toast('این آزمون قبلاً روی این دستگاه انجام شده است.');return;}
  openModal(`<h2>${esc(t.title)}</h2><p class="lead">${esc(t.welcome||'خوش آمدید! برای شروع آماده شوید.')}</p>
  <div class="test-link-box"><b>لینک این آزمون:</b><input readonly value="${esc(testLink(t.id))}"><button type="button" class="btn secondary" data-action="copyLink" data-id="${esc(t.id)}">📋 کپی</button></div>
@@ -527,31 +522,17 @@ async function openTest(id){
 let lastAttemptSubmitAt=0;
 async function startAttempt(e,testId){
  e.preventDefault();
- if(Date.now()-lastAttemptSubmitAt<1500){toast('لطفاً کمی صبر کن و دوباره تلاش کن.');return;}
+ if(Date.now()-lastAttemptSubmitAt<3000){toast('لطفاً چند ثانیه صبر کن و دوباره تلاش کن.');return;}
  lastAttemptSubmitAt=Date.now();
  if(!authUser?.id){toast('احراز هویت آزمون‌دهنده آماده نیست.');return;}
  const t=db.tests.find(x=>x.id===testId),f=new FormData(e.target),did=deviceId();
- if(!t){toast('آزمون پیدا نشد.');return;}
- const durationMinutes=Math.max(0,Number(t.duration)||0);
  const now=Date.now();
  let a=db.attempts.find(x=>x.testId===testId&&x.deviceId===did&&!x.completed);
- // اگر تلاش قبلی از زمان مجاز عبور کرده باشد، اجازه ادامه نمی‌دهیم.
- if(a && durationMinutes>0 && now >= a.start + durationMinutes*60000){
-   currentAttempt=a;
-   await finishAttempt(true);
-   return;
- }
  if(!a){
    let order=[...t.questionIds];if(t.randomQuestions)order.sort(()=>Math.random()-.5);
    a={id:uid('attempt'),testId,deviceId:did,first:String(f.get('first')||'').trim(),last:String(f.get('last')||'').trim(),age:f.get('age'),grade:String(f.get('grade')||'').trim(),notes:String(f.get('notes')||'').trim(),answers:{},index:0,start:now,completed:false,order};
-   db.attempts.unshift(a);
-   const saved=await persistAttempt(a);
-   if(!saved){db.attempts=db.attempts.filter(x=>x.id!==a.id);cacheDB();return;}
- }else{
-   a.first=String(f.get('first')||'').trim();a.last=String(f.get('last')||'').trim();a.age=f.get('age');a.grade=String(f.get('grade')||'').trim();a.notes=String(f.get('notes')||'').trim();
-   const saved=await persistAttempt(a);
-   if(!saved){toast('آزمون هنوز روی سرور ثبت نشده است؛ دوباره تلاش کن.');return;}
- }
+   db.attempts.unshift(a);await persistAttempt(a);
+ }else{a.first=String(f.get('first')||'').trim();a.last=String(f.get('last')||'').trim();a.age=f.get('age');a.grade=String(f.get('grade')||'').trim();a.notes=String(f.get('notes')||'').trim();await persistAttempt(a);}
  cacheDB();closeModal();runExam(a.id);
 }
 function runExam(aid){
@@ -561,19 +542,11 @@ function runExam(aid){
  renderQuestion();startTimer();
 }
 function startTimer(){
- clearInterval(timer);
- const t=db.tests.find(x=>x.id===currentAttempt.testId);
- const durationMinutes=Math.max(0,Number(t?.duration)||0);
- const el=document.getElementById('timer');
- if(!durationMinutes){if(el)el.textContent='بدون محدودیت';return;}
- const end=currentAttempt.start+durationMinutes*60000;
- const tick=()=>{
-   const sec=Math.max(0,Math.ceil((end-Date.now())/1000));
-   if(el)el.textContent=String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
-   if(sec<=0){clearInterval(timer);finishAttempt(true);}
- };
- tick();
- timer=setInterval(tick,1000);
+ clearInterval(timer);const t=db.tests.find(x=>x.id===currentAttempt.testId);
+ if(!t.duration){document.getElementById('timer').textContent='بدون محدودیت';return;}
+ const end=currentAttempt.start+t.duration*60000;
+ const tick=()=>{const sec=Math.max(0,Math.floor((end-Date.now())/1000));const el=document.getElementById('timer');if(el)el.textContent=String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');if(sec<=0){clearInterval(timer);finishAttempt(true);}};
+ tick();timer=setInterval(tick,1000);
 }
 function renderQuestion(){
  const t=db.tests.find(x=>x.id===currentAttempt.testId),q=db.questions.find(x=>x.id===currentAttempt.order[currentAttempt.index]);
@@ -887,15 +860,32 @@ function showTestResults(testId){
 function editTest(id){
  const t=id?db.tests.find(x=>x.id===id):{title:'',description:'',welcome:'خوش آمدید! آماده‌ای؟',category:db.categories[0],difficulty:'متوسط',duration:10,showResult:true,multiple:false,randomQuestions:false,visibility:'public',status:'draft',rules:'پاسخ‌ها را با دقت انتخاب کنید.',questionIds:[]};
  const cats=db.categories.map(x=>`<option ${x===t.category?'selected':''}>${esc(x)}</option>`).join('');
- const qs=db.questions.map(q=>`<label class="question-pick"><input type="checkbox" name="qs" value="${q.id}" ${(t.questionIds||[]).includes(q.id)?'checked':''}><span><b>${esc(q.text)}</b><small class="muted" style="display:block;margin-top:4px">${typeLabel(q.type)} · ${Number(q.score||1)} امتیاز · ${esc(q.difficulty||'متوسط')}</small></span></label>`).join('');
+ const selectedIds=new Set(t.questionIds||[]);
+ const qs=db.questions.map(q=>`<div class="question-pick" data-question-row="${q.id}"><label style="display:flex;align-items:flex-start;gap:10px;flex:1;cursor:pointer;margin:0!important"><input type="checkbox" name="qs" value="${q.id}" ${selectedIds.has(q.id)?'checked':''}><span><b>${esc(q.text)}</b><small class="muted" style="display:block;margin-top:4px">${typeLabel(q.type)} · ${Number(q.score||1)} امتیاز · ${esc(q.difficulty||'متوسط')}</small></span></label><div class="question-pick-actions"><button type="button" class="btn secondary btn-sm" data-action="editTestQuestion" data-question-id="${q.id}">ویرایش سؤال</button>${selectedIds.has(q.id)?`<button type="button" class="btn danger btn-sm" data-action="removeQuestionFromTest" data-question-id="${q.id}">حذف از آزمون</button>`:''}</div></div>`).join('');
  openModal(`<h2>${id?'ویرایش آزمون':'ساخت آزمون'}</h2><form id="testForm"><div class="formgrid"><div class="field"><label>عنوان *</label><input name="title" value="${esc(t.title)}" required></div><div class="field"><label>دسته</label><select name="category">${cats}</select></div><div class="field"><label>سطح</label><select name="difficulty"><option ${t.difficulty==='آسان'?'selected':''}>آسان</option><option ${t.difficulty==='متوسط'?'selected':''}>متوسط</option><option ${t.difficulty==='سخت'?'selected':''}>سخت</option></select></div><div class="field"><label>زمان (دقیقه)</label><input name="duration" type="number" min="0" value="${t.duration}"></div><div class="field full"><label>توضیحات</label><textarea name="description">${esc(t.description)}</textarea></div><div class="field full"><label>پیام خوش‌آمدگویی</label><textarea name="welcome">${esc(t.welcome)}</textarea></div><div class="field full"><label>قوانین</label><textarea name="rules">${esc(t.rules)}</textarea></div><div class="field"><label>وضعیت</label><select name="status"><option value="draft" ${t.status==='draft'?'selected':''}>پیش‌نویس</option><option value="published" ${t.status==='published'?'selected':''}>منتشرشده</option><option value="unpublished" ${t.status==='unpublished'?'selected':''}>لغو انتشار</option></select></div><div class="field"><label>دسترسی</label><select name="visibility"><option value="public" ${t.visibility==='public'?'selected':''}>عمومی</option><option value="private" ${t.visibility==='private'?'selected':''}>خصوصی با لینک</option></select></div><div class="field"><label>گزینه‌ها</label><label><input type="checkbox" name="showResult" ${t.showResult!==false?'checked':''}> نمایش نتیجه</label><label><input type="checkbox" name="multiple" ${t.multiple?'checked':''}> چندبار شرکت</label><label><input type="checkbox" name="randomQuestions" ${t.randomQuestions?'checked':''}> تصادفی‌سازی سؤال‌ها</label></div><div class="field full">
 <label>انتخاب سؤال‌ها</label>
 <div class="question-select-head">
   <div class="muted">از بانک سؤال انتخاب کن یا همین‌جا سؤال جدید بساز.</div>
   <button type="button" class="btn primary" id="addQuestionFromTest">+ افزودن سؤال جدید</button>
 </div>
-<div class="question-picker" style="max-height:260px;overflow:auto">${qs||'<div class="empty-question">هنوز سؤالی ساخته نشده است. از دکمه «افزودن سؤال جدید» استفاده کن.</div>'}</div>
+<div class="question-picker" style="max-height:320px;overflow:auto">${qs||'<div class="empty-question">هنوز سؤالی ساخته نشده است. از دکمه «افزودن سؤال جدید» استفاده کن.</div>'}</div>
+<div class="muted" style="margin-top:8px;font-size:12px">برای سؤال‌های اضافه‌شده به این آزمون، از «ویرایش سؤال» برای اصلاح مستقیم و از «حذف از آزمون» برای برداشتن سؤال فقط از همین آزمون استفاده کن.</div>
 </div></div><div class="actions"><button class="btn primary">ذخیره آزمون</button></div></form>`);
+ document.querySelectorAll('[data-action="editTestQuestion"]').forEach(btn=>btn.addEventListener('click',()=>{
+   const qid=btn.dataset.questionId;
+   if(qid) editQuestion(qid,id||null);
+ }));
+ document.querySelectorAll('[data-action="removeQuestionFromTest"]').forEach(btn=>btn.addEventListener('click',async()=>{
+   const qid=btn.dataset.questionId;
+   const q=db.questions.find(x=>x.id===qid);
+   const current=db.tests.find(x=>x.id===id);
+   if(!qid||!current||!Array.isArray(current.questionIds)||!current.questionIds.includes(qid)) return;
+   if(!confirm(`سؤال «${String(q?.text||'').slice(0,80)}${(q?.text||'').length>80?'…':''}» فقط از این آزمون حذف شود؟\n\nخود سؤال در «بانک سؤال» باقی می‌ماند و می‌توانی بعداً دوباره آن را به آزمون اضافه کنی.`)) return;
+   current.questionIds=current.questionIds.filter(x=>x!==qid);
+   await persistContent();
+   editTest(id);
+   toast('سؤال از این آزمون حذف شد.');
+ }));
  document.getElementById('addQuestionFromTest')?.addEventListener('click',()=>{
    // اگر آزمون هنوز ذخیره نشده، ابتدا آن را به‌صورت پیش‌نویس ذخیره می‌کنیم
    // تا سؤال جدید بتواند مستقیماً به همین آزمون متصل شود.
@@ -923,39 +913,10 @@ function editTest(id){
    closeModal();
    editQuestion(null,currentId);
 });
-document.getElementById('testForm').addEventListener('submit',async e=>{
- e.preventDefault();
- const f=new FormData(e.target),ids=f.getAll('qs');
- if(!ids.length){toast('حداقل یک سؤال انتخاب کن.');return;}
- const btn=e.submitter||e.target.querySelector('button[type="submit"]');
- if(btn){btn.disabled=true;btn.textContent='در حال ذخیره...';}
- let obj=id?db.tests.find(x=>x.id===id):{id:uid('test')};
- const oldObj=id?clone(obj):null;
- Object.assign(obj,{title:String(f.get('title')||'').trim(),description:String(f.get('description')||''),welcome:String(f.get('welcome')||''),rules:String(f.get('rules')||''),category:String(f.get('category')||''),difficulty:String(f.get('difficulty')||'متوسط'),duration:Math.max(0,Number(f.get('duration')||0)),showResult:f.get('showResult')==='on',multiple:f.get('multiple')==='on',randomQuestions:f.get('randomQuestions')==='on',visibility:f.get('visibility')||'public',status:f.get('status')||'draft',questionIds:ids});
- if(!id)db.tests.push(obj);
- cacheDB();
- const ok=await persistContent();
- if(!ok){
-   if(!id)db.tests=db.tests.filter(x=>x.id!==obj.id);else Object.assign(obj,oldObj);
-   cacheDB();
-   if(btn){btn.disabled=false;btn.textContent='ذخیره آزمون';}
-   return;
- }
- closeModal();renderAdmin('tests');renderHome();toast('آزمون با موفقیت روی سرور ذخیره شد.');
-});
+document.getElementById('testForm').addEventListener('submit',e=>{e.preventDefault();const f=new FormData(e.target),ids=f.getAll('qs');if(!ids.length){toast('حداقل یک سؤال انتخاب کن.');return;}let obj=id?db.tests.find(x=>x.id===id):{id:uid('test')};Object.assign(obj,{title:f.get('title'),description:f.get('description'),welcome:f.get('welcome'),rules:f.get('rules'),category:f.get('category'),difficulty:f.get('difficulty'),duration:Number(f.get('duration')||0),showResult:f.get('showResult')==='on',multiple:f.get('multiple')==='on',randomQuestions:f.get('randomQuestions')==='on',visibility:f.get('visibility'),status:f.get('status'),questionIds:ids});if(!id)db.tests.push(obj);saveDB();closeModal();renderAdmin('tests');toast('آزمون ذخیره شد.');});
 }
-async function togglePublish(id){
- const t=db.tests.find(x=>x.id===id);if(!t)return;
- const old=t.status;t.status=t.status==='published'?'unpublished':'published';cacheDB();
- if(!(await persistContent())){t.status=old;cacheDB();return;}
- renderAdmin('tests');renderHome();toast(t.status==='published'?'آزمون منتشر شد.':'انتشار آزمون لغو شد.');
-}
-async function duplicateTest(id){
- const t=db.tests.find(x=>x.id===id);if(!t)return;
- const n=clone(t);n.id=uid('test');n.title+=' (کپی)';n.status='draft';db.tests.push(n);cacheDB();
- if(!(await persistContent())){db.tests=db.tests.filter(x=>x.id!==n.id);cacheDB();return;}
- renderAdmin('tests');toast('آزمون تکثیر شد.');
-}
+function togglePublish(id){const t=db.tests.find(x=>x.id===id);if(!t)return;t.status=t.status==='published'?'unpublished':'published';saveDB();renderAdmin('tests');}
+function duplicateTest(id){const t=db.tests.find(x=>x.id===id);if(!t)return;const n=clone(t);n.id=uid('test');n.title+=' (کپی)';n.status='draft';db.tests.push(n);saveDB();renderAdmin('tests');toast('آزمون تکثیر شد.');}
 function editQuestion(id, returnToTestId=null){
  const original=id?db.questions.find(x=>x.id===id):null;
  const q=clone(original||{id:uid('q'),text:'',type:'mcq',options:['گزینه ۱','گزینه ۲','گزینه ۳','گزینه ۴'],correct:[0],score:1,difficulty:'متوسط',image:'',answers:[]});
@@ -1117,17 +1078,7 @@ async function addCategory(){if(!isManager())return;const name=prompt('نام د
 async function editCategory(index){if(!isManager())return;const old=db.categories[index];const name=prompt('نام جدید دسته:',old);if(!name||!name.trim()||name.trim()===old)return;db.categories[index]=name.trim();db.tests.forEach(t=>{if(t.category===old)t.category=name.trim();});await persistContent();renderAdmin('categories');renderHome();}
 async function deleteCategory(index){if(!isManager())return;const name=db.categories[index];if(db.tests.some(t=>t.category===name)){toast('ابتدا آزمون‌های این دسته را به دسته دیگری منتقل کن.');return;}if(!confirm(`دسته «${name}» حذف شود؟`))return;db.categories.splice(index,1);await persistContent();renderAdmin('categories');renderHome();}
 
-
-document.addEventListener('visibilitychange',()=>{
- if(document.visibilityState==='visible' && currentAttempt && !currentAttempt.completed){
-   const t=db.tests.find(x=>x.id===currentAttempt.testId);
-   const minutes=Math.max(0,Number(t?.duration)||0);
-   if(minutes && Date.now()>=currentAttempt.start+minutes*60000){clearInterval(timer);finishAttempt(true);}
-   else if(minutes) startTimer();
- }
-});
-
-window.addEventListener('beforeunload',()=>{if(currentAttempt&&!currentAttempt.completed){cacheDB();}});
+window.addEventListener('beforeunload',e=>{if(currentAttempt&&!currentAttempt.completed){persistAttempt(currentAttempt);e.preventDefault();e.returnValue='آزمون شما ذخیره شده است.';}});
 initCloud().then(()=>{
  const linkedTest=new URLSearchParams(window.location.search).get('test');
  if(linkedTest && db.tests.some(x=>x.id===linkedTest)) openTest(linkedTest);
